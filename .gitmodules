@@ -1,0 +1,5 @@
+[submodule "termux-terminal"]
+	path = termux-terminal
+	url = https://github.com/termux/termux-app.git
+	branch = master
+	shallow = true

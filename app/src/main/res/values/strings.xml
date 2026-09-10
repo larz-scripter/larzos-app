@@ -1,0 +1,11 @@
+<resources>
+    <string name="app_name">LarzOS</string>
+    <string name="setup_title">Setting up LarzOS</string>
+    <string name="setup_body">Downloading the LarzOS system (about 90 MB) and unpacking it. This happens once.</string>
+    <string name="setup_start">Install LarzOS</string>
+    <string name="setup_retry">Retry</string>
+    <string name="open_terminal">Open LarzOS</string>
+    <string name="session_notification">LarzOS is running</string>
+    <string name="err_no_network">No connection. Connect to Wi-Fi and try again.</string>
+    <string name="err_arch">This device\'s processor isn\'t supported yet (need arm64 or arm).</string>
+</resources>

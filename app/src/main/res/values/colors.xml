@@ -1,0 +1,9 @@
+<resources>
+    <color name="larz_bg">#0B1020</color>
+    <color name="larz_surface">#131A2E</color>
+    <color name="larz_lambda">#22D3EE</color>
+    <color name="larz_lambda_dim">#0E7490</color>
+    <color name="larz_text">#E8EEF7</color>
+    <color name="larz_muted">#8A97B0</color>
+    <color name="term_bg">#0A0E1A</color>
+</resources>
