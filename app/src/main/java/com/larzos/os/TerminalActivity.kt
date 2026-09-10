@@ -1,7 +1,9 @@
 package com.larzos.os
 
+import android.content.Intent
 import android.os.Bundle
 import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.WindowManager
 import androidx.appcompat.app.AppCompatActivity
 import com.termux.terminal.TerminalSession
@@ -23,6 +25,7 @@ class TerminalActivity : AppCompatActivity(), TerminalSessionClient, TerminalVie
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         view = TerminalView(this, null)
         view.setTerminalViewClient(this)
+        view.setTextSize((resources.displayMetrics.density * 14).toInt())
         setContentView(view)
 
         val env = (application as LarzApp).env
@@ -32,22 +35,23 @@ class TerminalActivity : AppCompatActivity(), TerminalSessionClient, TerminalVie
             env.root.absolutePath,
             argv.drop(1).toTypedArray(),
             LarzSession.prootEnv(env),
-            2000, // transcript rows
+            2000,               // transcript rows
             this
         )
         session = s
         view.attachSession(s)
-        startService(android.content.Intent(this, LarzSessionService::class.java))
+        view.requestFocus()
+        startService(Intent(this, LarzSessionService::class.java))
     }
 
     override fun onDestroy() {
         session?.finishIfRunning()
-        stopService(android.content.Intent(this, LarzSessionService::class.java))
+        stopService(Intent(this, LarzSessionService::class.java))
         super.onDestroy()
     }
 
     // --- TerminalSessionClient ---
-    override fun onTextChanged(changedSession: TerminalSession) = view.onScreenUpdated()
+    override fun onTextChanged(changedSession: TerminalSession) { view.onScreenUpdated() }
     override fun onTitleChanged(changedSession: TerminalSession) {}
     override fun onSessionFinished(finishedSession: TerminalSession) { finish() }
     override fun onCopyTextToClipboard(session: TerminalSession, text: String?) {}
@@ -56,7 +60,9 @@ class TerminalActivity : AppCompatActivity(), TerminalSessionClient, TerminalVie
     override fun onColorsChanged(session: TerminalSession) {}
     override fun onTerminalCursorStateChange(state: Boolean) {}
     override fun setTerminalShellPid(session: TerminalSession, pid: Int) {}
-    override fun getTerminalCursorStyle(): Int = 0
+    override fun getTerminalCursorStyle(): Int? = null
+
+    // --- shared logging (both client interfaces declare these) ---
     override fun logError(tag: String?, message: String?) { android.util.Log.e(tag, message ?: "") }
     override fun logWarn(tag: String?, message: String?) { android.util.Log.w(tag, message ?: "") }
     override fun logInfo(tag: String?, message: String?) { android.util.Log.i(tag, message ?: "") }
@@ -67,7 +73,7 @@ class TerminalActivity : AppCompatActivity(), TerminalSessionClient, TerminalVie
 
     // --- TerminalViewClient ---
     override fun onScale(scale: Float): Float = scale
-    override fun onSingleTapUp(e: android.view.MotionEvent?) { view.requestFocus() }
+    override fun onSingleTapUp(e: MotionEvent?) { view.requestFocus() }
     override fun shouldBackButtonBeMappedToEscape(): Boolean = false
     override fun shouldEnforceCharBasedInput(): Boolean = true
     override fun shouldUseCtrlSpaceWorkaround(): Boolean = false
@@ -75,12 +81,11 @@ class TerminalActivity : AppCompatActivity(), TerminalSessionClient, TerminalVie
     override fun copyModeChanged(copyMode: Boolean) {}
     override fun onKeyDown(keyCode: Int, e: KeyEvent?, session: TerminalSession?): Boolean = false
     override fun onKeyUp(keyCode: Int, e: KeyEvent?): Boolean = false
-    override fun onLongPress(event: android.view.MotionEvent?): Boolean = false
+    override fun onLongPress(event: MotionEvent?): Boolean = false
     override fun readControlKey(): Boolean = false
     override fun readAltKey(): Boolean = false
     override fun readShiftKey(): Boolean = false
     override fun readFnKey(): Boolean = false
     override fun onCodePoint(codePoint: Int, ctrlDown: Boolean, session: TerminalSession?): Boolean = false
     override fun onEmulatorSet() {}
-    override fun logError(tag: String?, message: String?, e: Throwable?) {}
 }
