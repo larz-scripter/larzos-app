@@ -1,10 +1,12 @@
 package com.larzos.os
 
 import android.content.Intent
+import android.content.Context
 import android.os.Bundle
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.WindowManager
+import android.view.inputmethod.InputMethodManager
 import androidx.appcompat.app.AppCompatActivity
 import com.termux.terminal.TerminalSession
 import com.termux.terminal.TerminalSessionClient
@@ -23,9 +25,15 @@ class TerminalActivity : AppCompatActivity(), TerminalSessionClient, TerminalVie
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        window.setSoftInputMode(
+            WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE or
+                WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE
+        )
         view = TerminalView(this, null)
         view.setTerminalViewClient(this)
         view.setTextSize((resources.displayMetrics.density * 14).toInt())
+        view.isFocusable = true
+        view.isFocusableInTouchMode = true
         setContentView(view)
 
         val env = (application as LarzApp).env
@@ -40,14 +48,26 @@ class TerminalActivity : AppCompatActivity(), TerminalSessionClient, TerminalVie
         )
         session = s
         view.attachSession(s)
-        view.requestFocus()
+        view.post { showKeyboard() }
         startService(Intent(this, LarzSessionService::class.java))
+    }
+
+    override fun onResume() {
+        super.onResume()
+        view.post { showKeyboard() }
     }
 
     override fun onDestroy() {
         session?.finishIfRunning()
         stopService(Intent(this, LarzSessionService::class.java))
         super.onDestroy()
+    }
+
+    /** Bring up the soft keyboard, focused on the terminal. */
+    private fun showKeyboard() {
+        view.requestFocus()
+        val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+        imm.showSoftInput(view, InputMethodManager.SHOW_IMPLICIT)
     }
 
     // --- TerminalSessionClient ---
@@ -73,7 +93,7 @@ class TerminalActivity : AppCompatActivity(), TerminalSessionClient, TerminalVie
 
     // --- TerminalViewClient ---
     override fun onScale(scale: Float): Float = scale
-    override fun onSingleTapUp(e: MotionEvent?) { view.requestFocus() }
+    override fun onSingleTapUp(e: MotionEvent?) { showKeyboard() }
     override fun shouldBackButtonBeMappedToEscape(): Boolean = false
     override fun shouldEnforceCharBasedInput(): Boolean = true
     override fun shouldUseCtrlSpaceWorkaround(): Boolean = false
