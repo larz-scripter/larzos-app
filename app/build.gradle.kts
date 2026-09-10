@@ -34,10 +34,27 @@ android {
         viewBinding = true
     }
 
+    // A stable, checked-in signing key so every build installs *over* the last
+    // one - no uninstall/reinstall between test versions. It is a shared test
+    // key, not a secret; move it to CI secrets before any real distribution.
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("larzos-signing.p12")
+            storePassword = "larzos"
+            keyAlias = "larzos"
+            keyPassword = "larzos"
+            storeType = "PKCS12"
+        }
+    }
+
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("debug")
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
 
