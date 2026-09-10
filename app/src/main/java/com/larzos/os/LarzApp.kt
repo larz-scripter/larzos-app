@@ -54,8 +54,8 @@ class LarzEnv(app: Application) {
         listOf(root, prootTmp, l2s).forEach { it.mkdirs() }
     }
 
-    /** Header-only stand-in for the /proc/net/* connection tables Android
-     *  hides from sandboxed apps (see LarzSession.prootArgv). Idempotent. */
+    // Header-only stand-in for the /proc/net connection tables Android hides
+    // from sandboxed apps (see LarzSession.prootArgv). Idempotent.
     private val procNetStub: File = File(prootTmp, "proc-net-stub")
     fun ensureProcNetStub(): File {
         if (!procNetStub.exists()) {
