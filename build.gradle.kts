@@ -6,8 +6,8 @@ plugins {
     id("org.jetbrains.kotlin.android") version "2.1.20" apply false
 }
 
-val larzVersionName: String by extra("0.1.0")
-val larzVersionCode: Int by extra(1)
+val larzVersionName: String by extra("0.1.9")
+val larzVersionCode: Int by extra(9)
 
 // The vendored Termux library modules declare a Maven publication for JitPack
 // (`from components.default`). We only consume them as project dependencies,
