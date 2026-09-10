@@ -19,9 +19,9 @@ android {
         buildConfigField(
             "String",
             "ROOTFS_BASE_URL",
-            "\"https://github.com/larz-scripter/larzos-linux/releases/download/v0.1.9\""
+            "\"https://github.com/larz-scripter/larzos-linux/releases/download/v0.1.10\""
         )
-        buildConfigField("String", "ROOTFS_ARM64", "\"larzos-rootfs-arm64-0.1.9.tar.gz\"")
+        buildConfigField("String", "ROOTFS_ARM64", "\"larzos-rootfs-arm64-0.1.10.tar.gz\"")
 
         ndk {
             // proot / loader ship as jniLibs; ship the arches we have bootstraps for.
