@@ -53,4 +53,17 @@ class LarzEnv(app: Application) {
     fun ensureDirs() {
         listOf(root, prootTmp, l2s).forEach { it.mkdirs() }
     }
+
+    /** Header-only stand-in for the /proc/net/* connection tables Android
+     *  hides from sandboxed apps (see LarzSession.prootArgv). Idempotent. */
+    private val procNetStub: File = File(prootTmp, "proc-net-stub")
+    fun ensureProcNetStub(): File {
+        if (!procNetStub.exists()) {
+            prootTmp.mkdirs()
+            procNetStub.writeText(
+                "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n"
+            )
+        }
+        return procNetStub
+    }
 }

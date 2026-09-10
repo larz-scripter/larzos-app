@@ -41,6 +41,17 @@ object LarzSession {
             "-b", "/system",
         )
         if (java.io.File("/apex").exists()) args += listOf("-b", "/apex")
+
+        // Android 10+ hides /proc/net/{tcp,udp,...} from sandboxed apps, so
+        // netstat / ss error out with "no support for AF INET". Bind a stub
+        // (header only) over each so the tools show an empty table instead of
+        // failing. Connection listing across the system genuinely can't be
+        // granted to an unprivileged app - `ip addr` / `ip route` / `ping`
+        // are the ways to inspect networking here.
+        val procNetStub = env.ensureProcNetStub().absolutePath
+        for (t in listOf("tcp", "tcp6", "udp", "udp6", "raw", "raw6")) {
+            args += listOf("-b", "$procNetStub:/proc/net/$t")
+        }
         // a persistent /root that survives even if the rootfs is reinstalled
         // could be added here later; for now /root lives in the rootfs.
 
