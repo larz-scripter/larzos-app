@@ -8,10 +8,14 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val env = (application as LarzApp).env
-        val next = if (env.isInstalled && env.proot.exists())
+
+        val ready = env.isInstalled && env.proot.exists() && !env.needsRootfsUpdate
+        val next = if (ready) {
             Intent(this, TerminalActivity::class.java)
-        else
+        } else {
             Intent(this, SetupActivity::class.java)
+                .putExtra(SetupActivity.EXTRA_UPDATE, env.needsRootfsUpdate)
+        }
         startActivity(next)
         finish()
     }

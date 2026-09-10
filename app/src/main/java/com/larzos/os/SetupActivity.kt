@@ -14,6 +14,8 @@ import kotlinx.coroutines.withContext
 
 class SetupActivity : AppCompatActivity() {
 
+    companion object { const val EXTRA_UPDATE = "update" }
+
     private lateinit var status: TextView
     private lateinit var bar: ProgressBar
     private lateinit var button: Button
@@ -30,7 +32,15 @@ class SetupActivity : AppCompatActivity() {
             button.visibility = View.GONE
             return
         }
+
         button.setOnClickListener { startInstall() }
+
+        // A base-system update - explain, and just start it.
+        if (intent.getBooleanExtra(EXTRA_UPDATE, false)) {
+            status.text = "Updating the LarzOS base system…"
+            button.text = "Update now"
+            startInstall()
+        }
     }
 
     private fun startInstall() {

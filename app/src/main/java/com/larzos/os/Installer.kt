@@ -37,7 +37,9 @@ class Installer(private val env: LarzEnv) {
         tmpTar.delete()
 
         postExtractFixups()
-        env.installedMarker.writeText(System.currentTimeMillis().toString())
+        // line 1 = the rootfs asset this was built from, so the app knows to
+        // re-unpack when a newer LarzOS base ships.
+        env.installedMarker.writeText(BuildConfig.ROOTFS_ARM64 + "\n" + System.currentTimeMillis())
         onProgress.update(100, "Ready")
     }
 
