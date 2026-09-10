@@ -19,7 +19,7 @@ android {
         buildConfigField(
             "String",
             "ROOTFS_BASE_URL",
-            "\"https://github.com/larz-scripter/larzos-linux/releases/latest/download\""
+            "\"https://github.com/larz-scripter/larzos-linux/releases/download/v0.1.7\""
         )
         buildConfigField("String", "ROOTFS_ARM64", "\"larzos-rootfs-arm64.tar.gz\"")
 
