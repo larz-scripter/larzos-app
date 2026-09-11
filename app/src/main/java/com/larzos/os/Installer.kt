@@ -76,6 +76,7 @@ class Installer(private val env: LarzEnv) {
 
     private fun extractTarGz(tar: File, into: File, onProgress: Progress) {
         val symlinks = ArrayList<Pair<File, String>>()
+        val hardlinks = ArrayList<Pair<File, File>>()
         TarArchiveInputStream(GzipCompressorInputStream(BufferedInputStream(tar.inputStream()))).use { tin ->
             var entry = tin.nextEntry
             var count = 0
@@ -86,10 +87,8 @@ class Installer(private val env: LarzEnv) {
                 when {
                     entry.isDirectory -> outFile.mkdirs()
                     entry.isSymbolicLink -> symlinks += outFile to entry.linkName
-                    entry.isLink -> {  // hard link
-                        val target = File(into, entry.linkName.removePrefix("./"))
-                        if (target.exists()) runCatching { android.system.Os.link(target.path, outFile.path) }
-                    }
+                    entry.isLink ->  // hard link - resolve in a later pass
+                        hardlinks += outFile to File(into, entry.linkName.removePrefix("./").removePrefix("/"))
                     else -> {
                         outFile.parentFile?.mkdirs()
                         outFile.outputStream().use { tin.copyTo(it, 64 * 1024) }
@@ -101,6 +100,18 @@ class Installer(private val env: LarzEnv) {
                 }
                 if (++count % 400 == 0) onProgress.update(-1, "Unpacking… $count files")
                 entry = tin.nextEntry
+            }
+        }
+        // hard links: real link where possible, otherwise a plain copy so the
+        // file still exists (a dangling `claude` is why this matters).
+        for ((link, target) in hardlinks) {
+            if (!target.exists()) continue
+            link.parentFile?.mkdirs()
+            link.delete()
+            val linked = runCatching { android.system.Os.link(target.path, link.path) }.isSuccess
+            if (!linked) runCatching {
+                target.inputStream().use { i -> link.outputStream().use { o -> i.copyTo(o, 64 * 1024) } }
+                link.setExecutable(target.canExecute(), false)
             }
         }
         // symlinks last, so their targets already exist
