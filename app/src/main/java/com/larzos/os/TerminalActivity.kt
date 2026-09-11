@@ -1,5 +1,7 @@
 package com.larzos.os
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
@@ -192,8 +194,19 @@ class TerminalActivity : AppCompatActivity(), TerminalSessionClient, TerminalVie
     override fun onTextChanged(changedSession: TerminalSession) { view.onScreenUpdated() }
     override fun onTitleChanged(changedSession: TerminalSession) {}
     override fun onSessionFinished(finishedSession: TerminalSession) { finish() }
-    override fun onCopyTextToClipboard(session: TerminalSession, text: String?) {}
-    override fun onPasteTextFromClipboard(session: TerminalSession?) {}
+    override fun onCopyTextToClipboard(session: TerminalSession, text: String?) {
+        if (text.isNullOrEmpty()) return
+        clipboard().setPrimaryClip(ClipData.newPlainText("LarzOS", text))
+    }
+
+    override fun onPasteTextFromClipboard(session: TerminalSession?) {
+        val clip = clipboard().primaryClip ?: return
+        if (clip.itemCount == 0) return
+        val text = clip.getItemAt(0).coerceToText(this)?.toString() ?: return
+        (session ?: this.session)?.emulator?.paste(text)
+    }
+
+    private fun clipboard() = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
     override fun onBell(session: TerminalSession) {}
     override fun onColorsChanged(session: TerminalSession) {}
     override fun onTerminalCursorStateChange(state: Boolean) {}
