@@ -91,4 +91,21 @@ class LarzEnv(app: Application) {
         }
         return privTokenFile.readText().trim()
     }
+
+    // Voice mode (see ClaudeVoiceBridge, VoiceActivity) - a fixed
+    // per-install Claude session id, resumed every turn, kept entirely
+    // separate from whatever's happening in the interactive terminal.
+    private val voiceSessionIdFile: File = File(root, "voice-session-id")
+    val voiceSessionId: String
+        get() {
+            if (!voiceSessionIdFile.exists()) voiceSessionIdFile.writeText(java.util.UUID.randomUUID().toString())
+            return voiceSessionIdFile.readText().trim()
+        }
+    /** Present once the voice session has been created on Claude's side (first turn). */
+    val voiceSessionMarker: File = File(root, "voice-session-started")
+    /** Deletes voice state so the next turn starts a brand new conversation. */
+    fun resetVoiceSession() {
+        voiceSessionIdFile.delete()
+        voiceSessionMarker.delete()
+    }
 }

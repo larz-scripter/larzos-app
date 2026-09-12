@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="match_parent"
+    android:orientation="vertical" android:background="@color/larz_bg"
+    android:padding="20dp">
+
+    <TextView
+        android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:text="Voice" android:textColor="@color/larz_text"
+        android:textSize="22sp" android:textStyle="bold"
+        android:layout_marginBottom="4dp" />
+
+    <TextView
+        android:id="@+id/voice_status"
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:textColor="@color/larz_muted" android:textSize="14sp"
+        android:layout_marginBottom="16dp" />
+
+    <ScrollView
+        android:id="@+id/voice_scroll"
+        android:layout_width="match_parent" android:layout_height="0dp"
+        android:layout_weight="1" android:background="#0B1020"
+        android:padding="12dp" android:layout_marginBottom="16dp">
+        <TextView
+            android:id="@+id/voice_transcript"
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:textColor="@color/larz_text" android:textSize="14sp"
+            android:fontFamily="monospace" android:textIsSelectable="true" />
+    </ScrollView>
+
+    <Button
+        android:id="@+id/voice_mic"
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="🎤  Tap to talk"
+        android:backgroundTint="@color/larz_lambda" android:textColor="#04121A"
+        android:textSize="16sp"
+        android:layout_marginBottom="14dp" />
+
+    <LinearLayout
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:orientation="horizontal" android:gravity="center_vertical"
+        android:layout_marginBottom="14dp">
+        <TextView
+            android:layout_width="0dp" android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Wake word: &quot;Doctor Larz&quot;"
+            android:textColor="@color/larz_text" android:textSize="14sp" />
+        <Switch
+            android:id="@+id/voice_wake_switch"
+            android:layout_width="wrap_content" android:layout_height="wrap_content" />
+    </LinearLayout>
+
+    <TextView
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="Runs Claude with full tool access and no per-action confirmation - see the LarzOS docs before enabling on a device you don\'t fully trust."
+        android:textColor="@color/larz_muted" android:textSize="11.5sp"
+        android:layout_marginBottom="14dp" />
+
+    <Button
+        android:id="@+id/voice_reset"
+        android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:text="Reset conversation"
+        android:background="@android:color/transparent" android:textColor="@color/larz_muted" />
+
+</LinearLayout>

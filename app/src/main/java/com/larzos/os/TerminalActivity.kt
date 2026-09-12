@@ -151,6 +151,7 @@ class TerminalActivity : AppCompatActivity(), TerminalSessionClient, TerminalVie
         bar.addView(keyButton("/") { chars("/") })
         bar.addView(keyButton("-") { chars("-") })
         bar.addView(keyButton("~") { chars("~") })
+        bar.addView(keyButton("🎤") { startActivity(Intent(this, VoiceActivity::class.java)) })
         bar.addView(keyButton("⚙") { startActivity(Intent(this, SystemAccessActivity::class.java)) })
 
         return HorizontalScrollView(this).apply {

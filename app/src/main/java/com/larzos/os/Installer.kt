@@ -145,6 +145,9 @@ class Installer(private val env: LarzEnv) {
             parentFile?.mkdirs()
             if (!exists()) writeText("")
         }
+        // ClaudeVoiceBridge's fixed working directory, so `-c/--session-id`
+        // conversation state stays consistent turn to turn.
+        File(env.rootfs, "root/voice").mkdirs()
 
         // `larz-priv` - the guest-side client for LarzPrivService (shell-UID
         // commands via Shizuku). See that class for the wire protocol.

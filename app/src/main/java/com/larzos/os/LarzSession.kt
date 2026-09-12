@@ -14,20 +14,20 @@ object LarzSession {
     private const val LOGIN_FALLBACK = "/bin/bash"
 
     /**
-     * argv[0] is proot itself (the executable path); the rest are proot args
-     * ending in the guest command. Feed this to TerminalSession as
-     * (shellPath = args[0], args = args.drop(1)).
+     * The proot flags + host bindings every guest invocation needs,
+     * regardless of what it then runs - shared by [prootArgv] (the
+     * interactive login shell) and [prootArgvForCommand] (one-shot, no
+     * PTY - see ClaudeVoiceBridge). Does not include `-w` (workdir) or the
+     * trailing guest command; callers append both.
      */
-    fun prootArgv(env: LarzEnv): List<String> {
+    private fun commonArgs(env: LarzEnv): MutableList<String> {
         val rootfs = env.rootfs.absolutePath
-        val guestPath = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
         val args = mutableListOf(
             env.proot.absolutePath,
             "--kill-on-exit",
             "--link2symlink",
             "-r", rootfs,
             "-0",                       // fake root inside the guest
-            "-w", "/root",
             // host bindings the guest needs
             "-b", "/dev",
             "-b", "/proc",
@@ -69,20 +69,45 @@ object LarzSession {
         // the file if this is the first launch.
         env.ensurePrivToken()
         args += listOf("-b", "${env.privTokenFile.absolutePath}:/root/.larz-priv-token")
+        return args
+    }
 
-        args += listOf(
-            "/usr/bin/env", "-i",
-            "HOME=/root",
-            "TERM=xterm-256color",
-            "LANG=C.UTF-8",
-            "PATH=$guestPath",
-            "PROOT_NO_SECCOMP=1",
-            "MOZ_FAKE_NO_SANDBOX=1",
-        )
+    private val guestEnv = listOf(
+        "/usr/bin/env", "-i",
+        "HOME=/root",
+        "TERM=xterm-256color",
+        "LANG=C.UTF-8",
+        "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        "PROOT_NO_SECCOMP=1",
+        "MOZ_FAKE_NO_SANDBOX=1",
+    )
 
+    /**
+     * argv[0] is proot itself (the executable path); the rest are proot args
+     * ending in the guest command. Feed this to TerminalSession as
+     * (shellPath = args[0], args = args.drop(1)).
+     */
+    fun prootArgv(env: LarzEnv): List<String> {
+        val args = commonArgs(env)
+        args += listOf("-w", "/root")
+        args += guestEnv
         val login = if (java.io.File(env.rootfs, LOGIN.removePrefix("/")).exists())
             LOGIN else LOGIN_FALLBACK
         args += listOf(login, "-l")
+        return args
+    }
+
+    /**
+     * Same guest, no PTY: for a one-shot headless command (ClaudeVoiceBridge)
+     * run via a plain ProcessBuilder instead of TerminalSession. [workdir] is
+     * a guest-absolute path (e.g. "/root/voice"); [guestCmd] is argv, not a
+     * shell string - no quoting needed, each element is passed through as-is.
+     */
+    fun prootArgvForCommand(env: LarzEnv, workdir: String, guestCmd: List<String>): List<String> {
+        val args = commonArgs(env)
+        args += listOf("-w", workdir)
+        args += guestEnv
+        args += guestCmd
         return args
     }
 
