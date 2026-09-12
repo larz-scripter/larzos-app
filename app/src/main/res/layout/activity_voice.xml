@@ -33,20 +33,35 @@
             android:orientation="vertical" />
     </ScrollView>
 
+    <!-- Collapsed by default, even while wake word is on - tap to expand.
+         Never takes space from the transcript above unless asked to. -->
     <LinearLayout
         android:id="@+id/voice_hearing_panel"
         android:layout_width="match_parent" android:layout_height="wrap_content"
         android:orientation="vertical" android:visibility="gone"
-        android:background="#0B1020" android:padding="8dp"
-        android:layout_marginBottom="12dp">
-        <TextView
-            android:layout_width="wrap_content" android:layout_height="wrap_content"
-            android:text="HEARING" android:textColor="@color/larz_muted"
-            android:textSize="10sp" android:letterSpacing="0.1"
-            android:layout_marginBottom="4dp" />
+        android:background="#0B1020"
+        android:layout_marginBottom="10dp">
+        <LinearLayout
+            android:id="@+id/voice_hearing_header"
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="horizontal" android:gravity="center_vertical"
+            android:padding="8dp" android:clickable="true" android:focusable="true">
+            <TextView
+                android:layout_width="0dp" android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="HEARING" android:textColor="@color/larz_muted"
+                android:textSize="10sp" android:letterSpacing="0.1" />
+            <TextView
+                android:id="@+id/voice_hearing_chevron"
+                android:text="▸"
+                android:textColor="@color/larz_muted" android:textSize="12sp"
+                android:layout_width="wrap_content" android:layout_height="wrap_content" />
+        </LinearLayout>
         <ScrollView
             android:id="@+id/voice_hearing_scroll"
-            android:layout_width="match_parent" android:layout_height="76dp">
+            android:layout_width="match_parent" android:layout_height="76dp"
+            android:visibility="gone"
+            android:paddingStart="8dp" android:paddingEnd="8dp" android:paddingBottom="8dp">
             <TextView
                 android:id="@+id/voice_hearing_log"
                 android:layout_width="match_parent" android:layout_height="wrap_content"
@@ -61,21 +76,15 @@
         android:text="Tap to talk"
         android:backgroundTint="@color/larz_lambda" android:textColor="#04121A"
         android:textSize="16sp" android:textStyle="bold"
-        android:layout_marginBottom="12dp" />
+        android:layout_marginBottom="10dp" />
 
-    <LinearLayout
+    <Button
+        android:id="@+id/voice_wake_button"
         android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:orientation="horizontal" android:gravity="center_vertical"
-        android:layout_marginBottom="6dp">
-        <TextView
-            android:layout_width="0dp" android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="Wake word: &quot;Doctor Larz&quot;"
-            android:textColor="@color/larz_text" android:textSize="14sp" />
-        <Switch
-            android:id="@+id/voice_wake_switch"
-            android:layout_width="wrap_content" android:layout_height="wrap_content" />
-    </LinearLayout>
+        android:text="Enable wake word: &quot;Doctor Larz&quot;"
+        android:background="@android:color/transparent"
+        android:textColor="@color/larz_muted" android:textSize="13.5sp"
+        android:layout_marginBottom="6dp" />
 
     <TextView
         android:layout_width="match_parent" android:layout_height="wrap_content"

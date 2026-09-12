@@ -83,6 +83,10 @@ object LarzSession {
         // Voice turn log (see LarzEnv.voiceLogFile / ClaudeVoiceBridge) -
         // readable from the terminal too: `tail -f ~/voice/voice.log`.
         args += listOf("-b", "${env.voiceLogFile.absolutePath}:/root/voice/voice.log")
+        // Wake-word hearing log (see LarzEnv.wakeLogFile / VoiceActivity) -
+        // `tail -f ~/voice/wake.log` to monitor what the wake-word loop is
+        // actually hearing over a longer session than the in-app panel keeps.
+        args += listOf("-b", "${env.wakeLogFile.absolutePath}:/root/voice/wake.log")
         return args
     }
 

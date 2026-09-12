@@ -9,6 +9,7 @@ import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.util.Log
+import java.util.Locale
 
 /**
  * Detects the "Doctor Larz" wake phrase and calls back so VoiceActivity can
@@ -49,14 +50,48 @@ interface WakeWordDetector {
  *     (already done here) to cut wake latency
  *   - tune the restart backoff below based on real-world ERROR_* frequency
  *     on the target device instead of the fixed values used here
+ *
+ * Matching is fuzzy, not a fixed phrase list: on-device testing showed
+ * generic STT regularly mangles "Larz" (not a dictionary word) into
+ * things like "large", "lars", "larsh". matchesWakeWord() normalizes the
+ * transcript and accepts anything starting with "doctor"/"dr" followed
+ * within two words by something within edit distance 2 of "larz".
  */
 class SpeechRecognizerWakeWordDetector(private val context: Context) : WakeWordDetector {
 
     companion object {
         private const val TAG = "WakeWordDetector"
-        private val WAKE_PHRASES = listOf("doctor larz", "dr larz", "dr. larz", "doctor lars")
         private const val RESTART_DELAY_MS = 300L
         private const val ERROR_BACKOFF_MS = 1500L
+
+        private fun normalize(s: String): String =
+            s.lowercase(Locale.US).replace(Regex("[^a-z0-9\\s]"), " ").replace(Regex("\\s+"), " ").trim()
+
+        private fun levenshtein(a: String, b: String): Int {
+            val dp = Array(a.length + 1) { IntArray(b.length + 1) }
+            for (i in 0..a.length) dp[i][0] = i
+            for (j in 0..b.length) dp[0][j] = j
+            for (i in 1..a.length) for (j in 1..b.length) {
+                dp[i][j] = if (a[i - 1] == b[j - 1]) dp[i - 1][j - 1]
+                else 1 + minOf(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1])
+            }
+            return dp[a.length][b.length]
+        }
+
+        fun matchesWakeWord(heard: String): Boolean {
+            val norm = normalize(heard)
+            if (norm.contains("doctorlarz") || norm.contains("drlarz")) return true
+            val words = norm.split(" ")
+            for (i in words.indices) {
+                if (words[i] != "doctor" && words[i] != "dr") continue
+                for (j in (i + 1)..minOf(i + 2, words.size - 1)) {
+                    val cand = words.getOrNull(j) ?: continue
+                    if (cand.isEmpty()) continue
+                    if (levenshtein(cand, "larz") <= 2) return true
+                }
+            }
+            return false
+        }
     }
 
     private var recognizer: SpeechRecognizer? = null
@@ -134,8 +169,7 @@ class SpeechRecognizerWakeWordDetector(private val context: Context) : WakeWordD
         val heard = bundle?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION).orEmpty()
         val top = heard.firstOrNull()
         if (!top.isNullOrBlank()) onHeard(top)
-        val matched = heard.any { phrase -> WAKE_PHRASES.any { phrase.contains(it, ignoreCase = true) } }
-        if (matched) {
+        if (heard.any { matchesWakeWord(it) }) {
             stop()
             onWake()
         }
