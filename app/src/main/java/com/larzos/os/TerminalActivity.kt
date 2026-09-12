@@ -77,6 +77,7 @@ class TerminalActivity : AppCompatActivity(), TerminalSessionClient, TerminalVie
         view.attachSession(s)
         view.post { showKeyboard() }
         startService(Intent(this, LarzSessionService::class.java))
+        startService(Intent(this, LarzPrivService::class.java))
     }
 
     override fun onResume() {
@@ -87,6 +88,7 @@ class TerminalActivity : AppCompatActivity(), TerminalSessionClient, TerminalVie
     override fun onDestroy() {
         session?.finishIfRunning()
         stopService(Intent(this, LarzSessionService::class.java))
+        stopService(Intent(this, LarzPrivService::class.java))
         super.onDestroy()
     }
 
@@ -149,6 +151,7 @@ class TerminalActivity : AppCompatActivity(), TerminalSessionClient, TerminalVie
         bar.addView(keyButton("/") { chars("/") })
         bar.addView(keyButton("-") { chars("-") })
         bar.addView(keyButton("~") { chars("~") })
+        bar.addView(keyButton("⚙") { startActivity(Intent(this, SystemAccessActivity::class.java)) })
 
         return HorizontalScrollView(this).apply {
             isHorizontalScrollBarEnabled = false

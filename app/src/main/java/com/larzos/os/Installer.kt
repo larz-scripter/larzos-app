@@ -137,5 +137,59 @@ class Installer(private val env: LarzEnv) {
         listOf("usr/bin/larzsh", "bin/bash", "bin/sh", "usr/bin/env").forEach {
             File(env.rootfs, it).setExecutable(true, false)
         }
+
+        // Bind-mount targets for LarzSession.prootArgv - proot needs these
+        // to already exist in the guest before it can bind onto them.
+        File(env.rootfs, "root/storage/shared").mkdirs()
+        File(env.rootfs, "root/.larz-priv-token").apply {
+            parentFile?.mkdirs()
+            if (!exists()) writeText("")
+        }
+
+        // `larz-priv` - the guest-side client for LarzPrivService (shell-UID
+        // commands via Shizuku). See that class for the wire protocol.
+        File(env.rootfs, "usr/local/bin/larz-priv").apply {
+            parentFile?.mkdirs()
+            writeText(LARZ_PRIV_SCRIPT)
+            setExecutable(true, false)
+        }
+    }
+
+    companion object {
+        private const val LARZ_PRIV_SCRIPT = """#!/bin/bash
+# larz-priv - run a command at Android's "shell" UID, via the LarzOS app's
+# Shizuku bridge (LarzPrivService, 127.0.0.1 only). Needs Shizuku connected
+# once: LarzOS app > gear icon > System access > Connect Shizuku.
+# Usage: larz-priv <command> [args...]
+PORT=8199
+TOKEN_FILE=/root/.larz-priv-token
+
+if [ $# -eq 0 ]; then
+  echo "usage: larz-priv <command> [args...]" >&2
+  exit 2
+fi
+if [ ! -s "${'$'}TOKEN_FILE" ]; then
+  echo "larz-priv: no bridge token yet - open the LarzOS app once first." >&2
+  exit 127
+fi
+
+exec 3<>"/dev/tcp/127.0.0.1/${'$'}PORT" 2>/dev/null || {
+  echo "larz-priv: bridge not reachable - open LarzOS > System access and connect Shizuku." >&2
+  exit 127
+}
+printf '%s\n' "${'$'}(cat "${'$'}TOKEN_FILE")" >&3
+printf '%s\n' "${'$'}*" >&3
+
+code=1
+while IFS= read -r line <&3; do
+  case "${'$'}line" in
+    __LARZ_EXIT__:*) code="${'$'}{line#__LARZ_EXIT__:}" ;;
+    __LARZ_ERR__:*) echo "larz-priv: ${'$'}{line#__LARZ_ERR__:}" >&2 ;;
+    *) printf '%s\n' "${'$'}line" ;;
+  esac
+done
+exec 3<&- 3>&-
+exit "${'$'}code"
+"""
     }
 }

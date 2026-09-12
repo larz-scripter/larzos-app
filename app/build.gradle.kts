@@ -32,6 +32,7 @@ android {
     buildFeatures {
         buildConfig = true
         viewBinding = true
+        aidl = true
     }
 
     // A stable, checked-in signing key so every build installs *over* the last
@@ -86,4 +87,11 @@ dependencies {
     // Termux terminal widgets (vendored submodule).
     implementation(project(":terminal-view"))
     implementation(project(":terminal-emulator"))
+
+    // Shizuku - runs commands at Android's "shell" UID (package management,
+    // settings, input, logs...) via a wireless-debugging-paired privileged
+    // service the user starts once in the separate Shizuku app. No root
+    // needed. See SystemAccessActivity + ShizukuBridge + LarzPrivService.
+    implementation("dev.rikka.shizuku:api:13.1.5")
+    implementation("dev.rikka.shizuku:provider:13.1.5")
 }

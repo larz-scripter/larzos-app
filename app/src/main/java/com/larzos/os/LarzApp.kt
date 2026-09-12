@@ -66,4 +66,29 @@ class LarzEnv(app: Application) {
         }
         return procNetStub
     }
+
+    /** True once the user has granted "All files access" (or on pre-API-30
+     *  devices, where the legacy READ/WRITE permissions cover it instead). */
+    val sharedStorageAvailable: Boolean
+        get() = android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.R ||
+            android.os.Environment.isExternalStorageManager()
+
+    // Per-install random secret so the loopback-only LarzPrivService (see
+    // that class) can tell "the LarzOS guest" apart from any other app on
+    // the phone that also happens to connect to 127.0.0.1 on its port -
+    // loopback is shared across every app on the device, this bind-mounted
+    // file is not (only this app's own proot guest can read it).
+    val privTokenFile: File = File(root, "priv-token")
+    fun ensurePrivToken(): String {
+        if (!privTokenFile.exists()) {
+            val bytes = ByteArray(24)
+            java.security.SecureRandom().nextBytes(bytes)
+            privTokenFile.writeText(
+                android.util.Base64.encodeToString(
+                    bytes, android.util.Base64.NO_WRAP or android.util.Base64.URL_SAFE
+                )
+            )
+        }
+        return privTokenFile.readText().trim()
+    }
 }
