@@ -18,7 +18,14 @@ import android.util.Log
  * changes anywhere else - VoiceActivity only ever talks to this interface.
  */
 interface WakeWordDetector {
-    fun start(onWake: () -> Unit)
+    /**
+     * [onHeard] fires for every transcript this hears - matched or not,
+     * partial or final - so the caller can show a live "what is it hearing"
+     * debug log (on-device feedback asked for exactly this: no visibility
+     * into whether the wake word was even being picked up). [onWake] fires
+     * only when the wake phrase itself is detected.
+     */
+    fun start(onWake: () -> Unit, onHeard: (String) -> Unit = {})
     fun stop()
     val isListening: Boolean
 }
@@ -58,10 +65,10 @@ class SpeechRecognizerWakeWordDetector(private val context: Context) : WakeWordD
     override var isListening: Boolean = false
         private set
 
-    override fun start(onWake: () -> Unit) {
+    override fun start(onWake: () -> Unit, onHeard: (String) -> Unit) {
         if (wanted) return
         wanted = true
-        runCycle(onWake)
+        runCycle(onWake, onHeard)
     }
 
     override fun stop() {
@@ -72,10 +79,11 @@ class SpeechRecognizerWakeWordDetector(private val context: Context) : WakeWordD
         recognizer = null
     }
 
-    private fun runCycle(onWake: () -> Unit) {
+    private fun runCycle(onWake: () -> Unit, onHeard: (String) -> Unit) {
         if (!wanted) return
         if (!SpeechRecognizer.isRecognitionAvailable(context)) {
             Log.w(TAG, "no speech recognizer available on this device")
+            onHeard("(no speech recognizer available on this device)")
             return
         }
         val r = SpeechRecognizer.createSpeechRecognizer(context)
@@ -87,8 +95,8 @@ class SpeechRecognizerWakeWordDetector(private val context: Context) : WakeWordD
             override fun onBufferReceived(buffer: ByteArray?) {}
             override fun onEndOfSpeech() {}
 
-            override fun onPartialResults(partialResults: Bundle?) = checkAndMaybeWake(partialResults, onWake)
-            override fun onResults(results: Bundle?) = checkAndMaybeWake(results, onWake)
+            override fun onPartialResults(partialResults: Bundle?) = checkAndMaybeWake(partialResults, onWake, onHeard)
+            override fun onResults(results: Bundle?) = checkAndMaybeWake(results, onWake, onHeard)
 
             override fun onError(error: Int) {
                 isListening = false
@@ -103,7 +111,10 @@ class SpeechRecognizerWakeWordDetector(private val context: Context) : WakeWordD
                     SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> RESTART_DELAY_MS
                     else -> ERROR_BACKOFF_MS
                 }
-                handler.postDelayed({ runCycle(onWake) }, delay)
+                if (error != SpeechRecognizer.ERROR_NO_MATCH && error != SpeechRecognizer.ERROR_SPEECH_TIMEOUT) {
+                    onHeard("(recognizer error $error, retrying)")
+                }
+                handler.postDelayed({ runCycle(onWake, onHeard) }, delay)
             }
 
             override fun onEvent(eventType: Int, params: Bundle?) {}
@@ -114,12 +125,15 @@ class SpeechRecognizerWakeWordDetector(private val context: Context) : WakeWordD
             putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
         }
         runCatching { r.startListening(intent) }.onFailure {
-            handler.postDelayed({ runCycle(onWake) }, ERROR_BACKOFF_MS)
+            onHeard("(couldn't start listening: ${it.message})")
+            handler.postDelayed({ runCycle(onWake, onHeard) }, ERROR_BACKOFF_MS)
         }
     }
 
-    private fun checkAndMaybeWake(bundle: Bundle?, onWake: () -> Unit) {
+    private fun checkAndMaybeWake(bundle: Bundle?, onWake: () -> Unit, onHeard: (String) -> Unit) {
         val heard = bundle?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION).orEmpty()
+        val top = heard.firstOrNull()
+        if (!top.isNullOrBlank()) onHeard(top)
         val matched = heard.any { phrase -> WAKE_PHRASES.any { phrase.contains(it, ignoreCase = true) } }
         if (matched) {
             stop()

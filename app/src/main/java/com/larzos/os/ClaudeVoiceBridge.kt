@@ -43,6 +43,26 @@ object ClaudeVoiceBridge {
     private const val WORKDIR = "/root/voice"
     private val LOG_TS = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US)
 
+    // Without this, Claude answers the way it would in the interactive
+    // terminal - markdown tables, headers, bullet lists - which a plain
+    // stripForSpeech() pass can only partially clean up before
+    // TextToSpeech reads it (confirmed on-device: a server-inspection
+    // reply came back as a full markdown table, read aloud almost
+    // verbatim). Telling it directly that this is a spoken interface goes
+    // straight to the root cause instead of scrubbing the output after.
+    private const val VOICE_SYSTEM_PROMPT =
+        "You are being used through a voice interface right now: the user is " +
+        "speaking to you, and your reply will be read aloud by text-to-speech, " +
+        "not displayed as text. Answer in short, natural spoken sentences only - " +
+        "no markdown, no tables, no bullet or numbered lists, no headers, no code " +
+        "blocks, no asterisks or other formatting symbols. If something is " +
+        "naturally tabular or code, describe the key point in plain words instead " +
+        "of rendering it. Keep answers brief and conversational unless the user " +
+        "clearly asks for more detail. " +
+        "In this voice interface specifically, you are 'Doctor Larz', the voice " +
+        "assistant for LarzOS - introduce yourself that way if asked who you are, " +
+        "and do not mention Claude, Claude Code, or Anthropic by name here."
+
     data class Result(val ok: Boolean, val text: String)
 
     fun ask(env: LarzEnv, prompt: String): Result {
@@ -58,6 +78,7 @@ object ClaudeVoiceBridge {
             listOf("--session-id", env.voiceSessionId) else listOf("--resume", env.voiceSessionId)
 
         val guestCmd = mutableListOf(guestClaude, "-p", "--dangerously-skip-permissions")
+        guestCmd += listOf("--append-system-prompt", VOICE_SYSTEM_PROMPT)
         guestCmd += sessionFlags
         guestCmd += prompt   // one argv element - proot/ProcessBuilder need no shell quoting
 
