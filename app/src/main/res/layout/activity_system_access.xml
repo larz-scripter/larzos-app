@@ -47,7 +47,7 @@
         android:textSize="16sp" android:textStyle="bold" />
     <TextView
         android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:text="Package management, settings, input, logs and more via `larz-priv` in the LarzOS shell - runs at Android's shell UID, not root."
+        android:text="Package management, settings, input, logs and more via `larz-priv` in the LarzOS shell - runs at Android\'s shell UID, not root."
         android:textColor="@color/larz_muted" android:textSize="13sp"
         android:layout_marginTop="2dp" android:layout_marginBottom="8dp" />
     <TextView
@@ -58,7 +58,7 @@
     <TextView
         android:id="@+id/shizuku_steps"
         android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:text="1. Install Shizuku (github.com/RikkaApps/Shizuku/releases).\n2. In Shizuku, follow \"Wireless debugging\" to pair once (Android 11+; needs Developer options on).\n3. Come back here and tap Connect."
+        android:text="1. Install Shizuku (github.com/RikkaApps/Shizuku/releases).\n2. In Shizuku, follow &quot;Wireless debugging&quot; to pair once (Android 11+; needs Developer options on).\n3. Come back here and tap Connect."
         android:textColor="@color/larz_muted" android:textSize="12.5sp"
         android:layout_marginBottom="14dp" />
     <Button
