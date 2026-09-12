@@ -1,25 +1,37 @@
 package com.larzos.os
 
+import android.content.ComponentName
+import android.content.ServiceConnection
 import android.content.pm.PackageManager
+import android.os.IBinder
 import rikka.shizuku.Shizuku
-import java.io.BufferedReader
-import java.io.InputStreamReader
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Thin wrapper around the Shizuku API: once the user has Shizuku's own
  * privileged service running (started via a one-time wireless-debugging
  * pairing, outside this app - see SystemAccessActivity for the exact
- * steps), this runs commands at Android's "shell" UID - far more than any
- * app's own sandbox, still short of root.
- *
- * Uses Shizuku.newProcess(), which is deprecated upstream in favour of a
- * custom AIDL "user service" - kept here because it maps directly onto
- * "run this shell command and get its output", which is all LarzPrivService
- * needs, without a second AIDL interface + implementation to maintain.
+ * steps) and has granted this app permission, binds Shizuku's "user
+ * service" model - [ShellUserService] running in a process Shizuku spawns
+ * at shell (or root) UID - to run arbitrary shell commands.
  */
 object ShizukuBridge {
     const val REQUEST_CODE = 7412
+
+    private val serviceRef = AtomicReference<IShellService?>(null)
+    private var connectLatch: CountDownLatch? = null
+
+    private val connection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
+            serviceRef.set(if (binder?.isBinderAlive == true) IShellService.Stub.asInterface(binder) else null)
+            connectLatch?.countDown()
+        }
+        override fun onServiceDisconnected(name: ComponentName?) {
+            serviceRef.set(null)
+        }
+    }
 
     val isAvailable: Boolean
         get() = runCatching { Shizuku.pingBinder() }.getOrDefault(false)
@@ -34,38 +46,47 @@ object ShizukuBridge {
         if (isAvailable && !hasPermission) Shizuku.requestPermission(REQUEST_CODE)
     }
 
+    /** Call once permission is confirmed granted (e.g. from SystemAccessActivity). Idempotent. */
+    fun connect() {
+        if (!hasPermission || serviceRef.get() != null) return
+        val args = Shizuku.UserServiceArgs(ComponentName(BuildConfig.APPLICATION_ID, ShellUserService::class.java.name))
+            .daemon(false)
+            .processNameSuffix("shell")
+            .debuggable(BuildConfig.DEBUG)
+            .version(BuildConfig.VERSION_CODE)
+        runCatching { Shizuku.bindUserService(args, connection) }
+    }
+
+    /** Blocks briefly for a first-time connect if [connect] hasn't finished yet. */
+    private fun awaitService(timeoutSec: Long = 5): IShellService? {
+        serviceRef.get()?.let { return it }
+        if (!hasPermission) return null
+        val latch = CountDownLatch(1)
+        connectLatch = latch
+        connect()
+        latch.await(timeoutSec, TimeUnit.SECONDS)
+        return serviceRef.get()
+    }
+
     /**
-     * Runs `sh -c cmdline` at shell UID. Buffers output (no live streaming,
-     * no stdin) and enforces [timeoutSec] / [maxBytes] - fine for the
-     * package-management / settings / diagnostics commands this bridge is
-     * for, not for long-running or interactive ones (use the terminal's own
+     * Runs `sh -c cmdline` at shell UID via [ShellUserService]. Buffers
+     * output (no live streaming, no stdin) - fine for the package-
+     * management / settings / diagnostics commands this bridge is for,
+     * not for long-running or interactive ones (use the terminal's own
      * proot shell for those).
      */
-    fun run(cmdline: String, timeoutSec: Long = 30, maxBytes: Int = 512 * 1024): Pair<Int, String> {
-        if (!hasPermission) return -1 to "shizuku permission not granted"
-        val process = try {
-            Shizuku.newProcess(arrayOf("sh", "-c", cmdline), null, null)
+    fun run(cmdline: String): Pair<Int, String> {
+        val service = awaitService() ?: return -1 to
+            "shizuku service not connected - open LarzOS > System access and tap Connect"
+        val result = try {
+            service.exec(cmdline)
         } catch (t: Throwable) {
-            return -1 to "shizuku newProcess failed: ${t.message}"
+            serviceRef.set(null) // stale/dead binder - force a reconnect next call
+            return -1 to "shell service call failed: ${t.message}"
         }
-        val out = StringBuilder()
-        val lock = Any()
-        fun pump(stream: java.io.InputStream) = Thread {
-            runCatching {
-                BufferedReader(InputStreamReader(stream)).forEachLine { line ->
-                    synchronized(lock) { if (out.length < maxBytes) out.append(line).append('\n') }
-                }
-            }
-        }.apply { start() }
-        val readers = listOf(pump(process.inputStream), pump(process.errorStream))
-
-        val finished = process.waitFor(timeoutSec, TimeUnit.SECONDS)
-        if (!finished) {
-            process.destroyForcibly()
-            readers.forEach { runCatching { it.join(500) } }
-            return -1 to (out.toString() + "[larz-priv: timed out after ${timeoutSec}s]\n")
-        }
-        readers.forEach { runCatching { it.join(1000) } }
-        return process.exitValue() to out.toString()
+        val nl = result.indexOf('\n')
+        if (nl < 0) return -1 to result
+        val code = result.substring(0, nl).toIntOrNull() ?: -1
+        return code to result.substring(nl + 1)
     }
 }

@@ -32,6 +32,7 @@ android {
     buildFeatures {
         buildConfig = true
         viewBinding = true
+        aidl = true
     }
 
     // A stable, checked-in signing key so every build installs *over* the last

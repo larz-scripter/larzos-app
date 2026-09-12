@@ -35,10 +35,11 @@ class SystemAccessActivity : AppCompatActivity() {
 
         storageButton.setOnClickListener { openStorageSettings() }
         shizukuButton.setOnClickListener {
-            if (!ShizukuBridge.isAvailable) {
-                shizukuStatus.text = "Shizuku isn't running yet - follow the steps below, then tap Connect."
-            } else {
-                ShizukuBridge.requestPermission()
+            when {
+                !ShizukuBridge.isAvailable ->
+                    shizukuStatus.text = "Shizuku isn't running yet - follow the steps below, then tap Connect."
+                ShizukuBridge.hasPermission -> ShizukuBridge.connect()
+                else -> ShizukuBridge.requestPermission()
             }
         }
         runCatching { Shizuku.addRequestPermissionResultListener(permissionListener) }
@@ -60,6 +61,7 @@ class SystemAccessActivity : AppCompatActivity() {
             "Granted - ~/storage/shared is live in the shell." else "Not granted yet."
         storageButton.text = if (env.sharedStorageAvailable) "Manage" else "Grant storage access"
 
+        if (ShizukuBridge.hasPermission) ShizukuBridge.connect()
         shizukuStatus.text = when {
             ShizukuBridge.hasPermission -> "Connected - `larz-priv <command>` works in the shell."
             ShizukuBridge.isAvailable -> "Shizuku is running - tap Connect to grant LarzOS permission."
