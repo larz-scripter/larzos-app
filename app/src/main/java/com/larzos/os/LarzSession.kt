@@ -55,6 +55,21 @@ object LarzSession {
         // a persistent /root that survives even if the rootfs is reinstalled
         // could be added here later; for now /root lives in the rootfs.
 
+        // Shared phone storage (Downloads, Pictures, ...) - only once "All
+        // files access" is granted (see SystemAccessActivity). Termux calls
+        // this same convention ~/storage/shared; the mountpoint must already
+        // exist in the rootfs (Installer.postExtractFixups creates it).
+        if (env.sharedStorageAvailable) {
+            val shared = android.os.Environment.getExternalStorageDirectory().absolutePath
+            args += listOf("-b", "$shared:/root/storage/shared")
+        }
+        // Shell-UID command bridge (see LarzPrivService + the `larz-priv`
+        // guest script) - the per-install token that authenticates the
+        // guest to that loopback service. ensurePrivToken() also creates
+        // the file if this is the first launch.
+        env.ensurePrivToken()
+        args += listOf("-b", "${env.privTokenFile.absolutePath}:/root/.larz-priv-token")
+
         args += listOf(
             "/usr/bin/env", "-i",
             "HOME=/root",

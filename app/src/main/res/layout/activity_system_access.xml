@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="match_parent"
+    android:background="@color/larz_bg">
+<LinearLayout
+    android:layout_width="match_parent" android:layout_height="wrap_content"
+    android:orientation="vertical" android:padding="24dp">
+
+    <TextView
+        android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:text="System access" android:textColor="@color/larz_text"
+        android:textSize="22sp" android:textStyle="bold"
+        android:layout_marginBottom="4dp" />
+
+    <TextView
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="What the LarzOS shell can reach beyond its own sandbox, without rooting the phone."
+        android:textColor="@color/larz_muted" android:textSize="13sp"
+        android:layout_marginBottom="24dp" />
+
+    <!-- Storage -->
+    <TextView
+        android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:text="Shared storage" android:textColor="@color/larz_text"
+        android:textSize="16sp" android:textStyle="bold" />
+    <TextView
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="Downloads, Pictures, Documents and the rest of shared storage, mounted at ~/storage/shared."
+        android:textColor="@color/larz_muted" android:textSize="13sp"
+        android:layout_marginTop="2dp" android:layout_marginBottom="8dp" />
+    <TextView
+        android:id="@+id/storage_status"
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:textColor="@color/larz_muted" android:textSize="13sp"
+        android:layout_marginBottom="10dp" />
+    <Button
+        android:id="@+id/storage_button"
+        android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:text="Grant storage access"
+        android:backgroundTint="@color/larz_lambda" android:textColor="#04121A"
+        android:layout_marginBottom="28dp" />
+
+    <!-- Shizuku -->
+    <TextView
+        android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:text="System shell (Shizuku)" android:textColor="@color/larz_text"
+        android:textSize="16sp" android:textStyle="bold" />
+    <TextView
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="Package management, settings, input, logs and more via `larz-priv` in the LarzOS shell - runs at Android's shell UID, not root."
+        android:textColor="@color/larz_muted" android:textSize="13sp"
+        android:layout_marginTop="2dp" android:layout_marginBottom="8dp" />
+    <TextView
+        android:id="@+id/shizuku_status"
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:textColor="@color/larz_muted" android:textSize="13sp"
+        android:layout_marginBottom="10dp" />
+    <TextView
+        android:id="@+id/shizuku_steps"
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="1. Install Shizuku (github.com/RikkaApps/Shizuku/releases).\n2. In Shizuku, follow \"Wireless debugging\" to pair once (Android 11+; needs Developer options on).\n3. Come back here and tap Connect."
+        android:textColor="@color/larz_muted" android:textSize="12.5sp"
+        android:layout_marginBottom="14dp" />
+    <Button
+        android:id="@+id/shizuku_button"
+        android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:text="Connect Shizuku"
+        android:backgroundTint="@color/larz_lambda" android:textColor="#04121A" />
+
+</LinearLayout>
+</ScrollView>

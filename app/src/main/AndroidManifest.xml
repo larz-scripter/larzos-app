@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
@@ -7,6 +8,13 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+
+    <!-- Shared storage (Downloads, Pictures, ...) bound into the guest at
+         /root/storage/shared once granted - see LarzSession.prootArgv. -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+        tools:ignore="ScopedStorage" />
 
     <application
         android:name=".LarzApp"
@@ -38,6 +46,11 @@
             android:windowSoftInputMode="adjustResize"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|keyboard|navigation|density|fontScale" />
 
+        <activity
+            android:name=".SystemAccessActivity"
+            android:exported="false"
+            android:label="System access" />
+
         <service
             android:name=".LarzSessionService"
             android:exported="false"
@@ -46,5 +59,21 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Keeps the LarzOS session alive while you're using it." />
         </service>
+
+        <!-- Loopback (127.0.0.1-only) bridge the guest's `larz-priv` script
+             talks to for shell-UID commands via Shizuku. See LarzPrivService. -->
+        <service
+            android:name=".LarzPrivService"
+            android:exported="false" />
+
+        <!-- Shizuku's own binder-transport provider - required for the
+             Shizuku API to find and bind to a running Shizuku service. -->
+        <provider
+            android:name="rikka.shizuku.ShizukuProvider"
+            android:authorities="${applicationId}.shizuku"
+            android:multiprocess="false"
+            android:enabled="true"
+            android:exported="true"
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
     </application>
 </manifest>
