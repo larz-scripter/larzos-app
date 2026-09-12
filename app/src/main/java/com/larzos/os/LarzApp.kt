@@ -108,4 +108,27 @@ class LarzEnv(app: Application) {
         voiceSessionIdFile.delete()
         voiceSessionMarker.delete()
     }
+
+    /** Every voice turn's raw invocation + output, for on-device debugging -
+     *  see ClaudeVoiceBridge. Also bind-mounted into the guest (LarzSession)
+     *  at /root/voice/voice.log so `tail -f ~/voice/voice.log` works too. */
+    val voiceLogFile: File = File(root, "voice.log")
+
+    /**
+     * Creates guest-side paths that other bind mounts/tools need to already
+     * exist (proot's -b requires the target to be there first) - Installer.
+     * postExtractFixups() creates these too, but only runs at (re)install
+     * time. An already-installed rootfs from before a given feature shipped
+     * would never get them otherwise, so this runs on every proot launch
+     * instead (LarzSession.commonArgs) - cheap, idempotent.
+     */
+    fun ensureGuestPaths() {
+        if (!rootfs.isDirectory) return
+        File(rootfs, "root/voice").mkdirs()
+        File(rootfs, "root/storage/shared").mkdirs()
+        File(rootfs, "root/.larz-priv-token").apply {
+            if (!exists()) runCatching { parentFile?.mkdirs(); writeText("") }
+        }
+        if (!voiceLogFile.exists()) runCatching { voiceLogFile.writeText("") }
+    }
 }

@@ -20,14 +20,25 @@ object LarzSession {
      * PTY - see ClaudeVoiceBridge). Does not include `-w` (workdir) or the
      * trailing guest command; callers append both.
      */
-    private fun commonArgs(env: LarzEnv): MutableList<String> {
+    private fun commonArgs(env: LarzEnv, fakeRoot: Boolean = true): MutableList<String> {
         val rootfs = env.rootfs.absolutePath
         val args = mutableListOf(
             env.proot.absolutePath,
             "--kill-on-exit",
             "--link2symlink",
             "-r", rootfs,
-            "-0",                       // fake root inside the guest
+        )
+        // Fake root (-0) is what lets apt/package-manager-style tools in the
+        // interactive shell work at all - they assume they're really root
+        // and refuse otherwise. It's cosmetic, not a real privilege change:
+        // proot is unprivileged ptrace, so actual file access is still
+        // governed by the real Android app UID underneath either way.
+        // BUT `claude` itself hard-refuses --dangerously-skip-permissions
+        // when it sees UID 0, for its own good reason - so the one-shot
+        // voice invocation (ClaudeVoiceBridge) needs this OFF to report the
+        // real non-root UID instead and actually be allowed to run.
+        if (fakeRoot) args += "-0"
+        args += listOf(
             // host bindings the guest needs
             "-b", "/dev",
             "-b", "/proc",
@@ -69,6 +80,9 @@ object LarzSession {
         // the file if this is the first launch.
         env.ensurePrivToken()
         args += listOf("-b", "${env.privTokenFile.absolutePath}:/root/.larz-priv-token")
+        // Voice turn log (see LarzEnv.voiceLogFile / ClaudeVoiceBridge) -
+        // readable from the terminal too: `tail -f ~/voice/voice.log`.
+        args += listOf("-b", "${env.voiceLogFile.absolutePath}:/root/voice/voice.log")
         return args
     }
 
@@ -88,6 +102,7 @@ object LarzSession {
      * (shellPath = args[0], args = args.drop(1)).
      */
     fun prootArgv(env: LarzEnv): List<String> {
+        env.ensureGuestPaths()
         val args = commonArgs(env)
         args += listOf("-w", "/root")
         args += guestEnv
@@ -103,8 +118,11 @@ object LarzSession {
      * a guest-absolute path (e.g. "/root/voice"); [guestCmd] is argv, not a
      * shell string - no quoting needed, each element is passed through as-is.
      */
-    fun prootArgvForCommand(env: LarzEnv, workdir: String, guestCmd: List<String>): List<String> {
-        val args = commonArgs(env)
+    fun prootArgvForCommand(
+        env: LarzEnv, workdir: String, guestCmd: List<String>, fakeRoot: Boolean = false
+    ): List<String> {
+        env.ensureGuestPaths()
+        val args = commonArgs(env, fakeRoot)
         args += listOf("-w", workdir)
         args += guestEnv
         args += guestCmd
