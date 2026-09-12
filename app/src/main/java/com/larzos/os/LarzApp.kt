@@ -114,6 +114,17 @@ class LarzEnv(app: Application) {
      *  at /root/voice/voice.log so `tail -f ~/voice/voice.log` works too. */
     val voiceLogFile: File = File(root, "voice.log")
 
+    /** Every phrase the wake-word loop hears, matched or not, plus every
+     *  match - see VoiceActivity/WakeWordDetector. Same bind-mount pattern
+     *  as voiceLogFile: also readable from the terminal at
+     *  ~/voice/wake.log, not just the app's own rolling 12-line UI panel,
+     *  so it can actually be monitored/tuned over a longer session. */
+    val wakeLogFile: File = File(root, "wake.log")
+    private val wakeLogTs = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US)
+    fun appendWakeLog(line: String) {
+        runCatching { wakeLogFile.appendText("[${wakeLogTs.format(java.util.Date())}] $line\n") }
+    }
+
     /**
      * Creates guest-side paths that other bind mounts/tools need to already
      * exist (proot's -b requires the target to be there first) - Installer.
@@ -130,5 +141,6 @@ class LarzEnv(app: Application) {
             if (!exists()) runCatching { parentFile?.mkdirs(); writeText("") }
         }
         if (!voiceLogFile.exists()) runCatching { voiceLogFile.writeText("") }
+        if (!wakeLogFile.exists()) runCatching { wakeLogFile.writeText("") }
     }
 }

@@ -18,7 +18,6 @@ import android.view.View
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
-import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
@@ -47,10 +46,12 @@ class VoiceActivity : AppCompatActivity() {
     private lateinit var transcriptBox: LinearLayout
     private lateinit var scroll: ScrollView
     private lateinit var hearingPanel: View
+    private lateinit var hearingHeader: View
+    private lateinit var hearingChevron: TextView
     private lateinit var hearingLog: TextView
     private lateinit var hearingScroll: ScrollView
     private lateinit var micButton: Button
-    private lateinit var wakeSwitch: Switch
+    private lateinit var wakeButton: Button
     private lateinit var resetButton: Button
 
     private var tts: TextToSpeech? = null
@@ -58,8 +59,11 @@ class VoiceActivity : AppCompatActivity() {
     private var commandRecognizer: SpeechRecognizer? = null
     private var wakeWord: WakeWordDetector? = null
     private var state = State.IDLE
+    private var wakeEnabled = false
+    private var hearingExpanded = false
     private val handler = Handler(Looper.getMainLooper())
     private val heardLines = ArrayDeque<String>()
+    private var lastLoggedHeard: String? = null
 
     private val micPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) onMicTapped() else toast("Voice needs microphone access.")
@@ -73,20 +77,20 @@ class VoiceActivity : AppCompatActivity() {
         transcriptBox = findViewById(R.id.voice_transcript_box)
         scroll = findViewById(R.id.voice_scroll)
         hearingPanel = findViewById(R.id.voice_hearing_panel)
+        hearingHeader = findViewById(R.id.voice_hearing_header)
+        hearingChevron = findViewById(R.id.voice_hearing_chevron)
         hearingLog = findViewById(R.id.voice_hearing_log)
         hearingScroll = findViewById(R.id.voice_hearing_scroll)
         micButton = findViewById(R.id.voice_mic)
-        wakeSwitch = findViewById(R.id.voice_wake_switch)
+        wakeButton = findViewById(R.id.voice_wake_button)
         resetButton = findViewById(R.id.voice_reset)
 
         tts = TextToSpeech(this) { code -> ttsReady = (code == TextToSpeech.SUCCESS) }
         wakeWord = SpeechRecognizerWakeWordDetector(this)
 
         micButton.setOnClickListener { onMicTapped() }
-        wakeSwitch.setOnCheckedChangeListener { _, checked ->
-            hearingPanel.visibility = if (checked) View.VISIBLE else View.GONE
-            if (checked) startWakeListening() else stopWakeListening()
-        }
+        wakeButton.setOnClickListener { toggleWakeWord() }
+        hearingHeader.setOnClickListener { toggleHearingPanel() }
         resetButton.setOnClickListener {
             (application as LarzApp).env.resetVoiceSession()
             transcriptBox.removeAllViews()
@@ -109,24 +113,60 @@ class VoiceActivity : AppCompatActivity() {
     private fun onMicTapped() {
         if (hasMicPermission()) {
             if (state == State.LISTENING) return
-            wakeWord?.stop()
-            wakeSwitch.isChecked = false
+            if (wakeEnabled) { wakeEnabled = false; wakeWord?.stop(); updateWakeButton() }
             startCommandListening()
         } else {
             micPermission.launch(Manifest.permission.RECORD_AUDIO)
         }
     }
 
+    private fun toggleWakeWord() {
+        wakeEnabled = !wakeEnabled
+        updateWakeButton()
+        // The hearing panel only exists to debug the wake-word loop - it has
+        // nothing to show and no reason to take space once wake mode is off.
+        hearingPanel.visibility = if (wakeEnabled) View.VISIBLE else View.GONE
+        if (wakeEnabled) startWakeListening() else stopWakeListening()
+    }
+
+    private fun updateWakeButton() {
+        wakeButton.text = if (wakeEnabled)
+            "Listening for “Doctor Larz” — tap to stop"
+        else
+            "Enable wake word: “Doctor Larz”"
+    }
+
+    private fun toggleHearingPanel() {
+        hearingExpanded = !hearingExpanded
+        hearingScroll.visibility = if (hearingExpanded) View.VISIBLE else View.GONE
+        hearingChevron.text = if (hearingExpanded) "▾" else "▸"
+    }
+
     private fun startWakeListening() {
         if (!hasMicPermission()) {
             micPermission.launch(Manifest.permission.RECORD_AUDIO)
-            wakeSwitch.isChecked = false
+            wakeEnabled = false
+            updateWakeButton()
+            hearingPanel.visibility = View.GONE
             return
         }
         setState(State.WAKE_LISTENING)
+        val env = (application as LarzApp).env
         wakeWord?.start(
-            onWake = { handler.post { startCommandListening() } },
-            onHeard = { phrase -> handler.post { appendHeard(phrase) } }
+            onWake = {
+                env.appendWakeLog("MATCHED -> starting command turn")
+                handler.post { startCommandListening() }
+            },
+            onHeard = { phrase ->
+                // Partial results repeat the same growing prefix many times
+                // a second while actively speaking - only log on an actual
+                // change, or every partial phrase would flood wake.log.
+                if (phrase != lastLoggedHeard) {
+                    lastLoggedHeard = phrase
+                    env.appendWakeLog(phrase)
+                }
+                handler.post { appendHeard(phrase) }
+            }
         )
     }
 
@@ -211,7 +251,7 @@ class VoiceActivity : AppCompatActivity() {
     }
 
     private fun backToIdleOrWake() {
-        if (wakeSwitch.isChecked) startWakeListening() else setState(State.IDLE)
+        if (wakeEnabled) startWakeListening() else setState(State.IDLE)
     }
 
     // ---- state / status ---------------------------------------------------
