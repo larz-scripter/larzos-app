@@ -38,9 +38,11 @@ class TerminalActivity : AppCompatActivity(), TerminalSessionClient, TerminalVie
     // next key then cleared (TerminalView polls read*Key() while handling input).
     private var ctrl = false
     private var alt = false
+    private var shift = false
     private var fn = false
     private var ctrlBtn: Button? = null
     private var altBtn: Button? = null
+    private var shiftBtn: Button? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -129,15 +131,15 @@ class TerminalActivity : AppCompatActivity(), TerminalSessionClient, TerminalVie
         val bar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setBackgroundColor(Color.parseColor("#0B1020"))
-            setPadding(dp(4), dp(2), dp(4), dp(2))
         }
 
         bar.addView(keyButton("Esc") { code(KeyEvent.KEYCODE_ESCAPE) })
         ctrlBtn = keyButton("Ctrl") { ctrl = !ctrl; paintToggle(it, ctrl) }
         altBtn = keyButton("Alt") { alt = !alt; paintToggle(it, alt) }
+        shiftBtn = keyButton("Shift") { shift = !shift; paintToggle(it, shift) }
         bar.addView(ctrlBtn)
         bar.addView(altBtn)
+        bar.addView(shiftBtn)
         bar.addView(keyButton("Tab") { code(KeyEvent.KEYCODE_TAB) })
         bar.addView(keyButton("←") { code(KeyEvent.KEYCODE_DPAD_LEFT) })
         bar.addView(keyButton("↑") { code(KeyEvent.KEYCODE_DPAD_UP) })
@@ -151,12 +153,36 @@ class TerminalActivity : AppCompatActivity(), TerminalSessionClient, TerminalVie
         bar.addView(keyButton("/") { chars("/") })
         bar.addView(keyButton("-") { chars("-") })
         bar.addView(keyButton("~") { chars("~") })
-        bar.addView(keyButton("🎤") { startActivity(Intent(this, VoiceActivity::class.java)) })
-        bar.addView(keyButton("⚙") { startActivity(Intent(this, SystemAccessActivity::class.java)) })
 
-        return HorizontalScrollView(this).apply {
-            isHorizontalScrollBarEnabled = false
+        val scroller = HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = true
             addView(bar)
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+
+        // Voice + System access are app navigation, not keyboard input - kept
+        // permanently visible instead of living inside the scrollable key row,
+        // where they were previously the last two of 18 buttons and easy to
+        // never notice at all.
+        val navColor = Color.parseColor("#1d3a2e")
+        val voiceBtn = keyButton("🎤") { startActivity(Intent(this, VoiceActivity::class.java)) }
+            .apply { setBackgroundColor(navColor) }
+        val settingsBtn = keyButton("⚙") { startActivity(Intent(this, SystemAccessActivity::class.java)) }
+            .apply { setBackgroundColor(navColor) }
+        val divider = View(this).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(1), dp(28))
+            setBackgroundColor(Color.parseColor("#26303d"))
+        }
+
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setBackgroundColor(Color.parseColor("#0B1020"))
+            setPadding(dp(4), dp(2), dp(4), dp(2))
+            addView(voiceBtn)
+            addView(settingsBtn)
+            addView(divider)
+            addView(scroller)
         }
     }
 
@@ -166,11 +192,14 @@ class TerminalActivity : AppCompatActivity(), TerminalSessionClient, TerminalVie
     }
 
     private fun keyMod(): Int =
-        (if (ctrl) KeyHandler.KEYMOD_CTRL else 0) or (if (alt) KeyHandler.KEYMOD_ALT else 0)
+        (if (ctrl) KeyHandler.KEYMOD_CTRL else 0) or
+            (if (alt) KeyHandler.KEYMOD_ALT else 0) or
+            (if (shift) KeyHandler.KEYMOD_SHIFT else 0)
 
     private fun clearMods() {
         if (ctrl) { ctrl = false; ctrlBtn?.let { paintToggle(it, false) } }
         if (alt) { alt = false; altBtn?.let { paintToggle(it, false) } }
+        if (shift) { shift = false; shiftBtn?.let { paintToggle(it, false) } }
         fn = false
     }
 
@@ -239,7 +268,7 @@ class TerminalActivity : AppCompatActivity(), TerminalSessionClient, TerminalVie
     override fun onLongPress(event: MotionEvent?): Boolean = false
     override fun readControlKey(): Boolean = ctrl
     override fun readAltKey(): Boolean = alt
-    override fun readShiftKey(): Boolean = false
+    override fun readShiftKey(): Boolean = shift
     override fun readFnKey(): Boolean = fn
     override fun onCodePoint(codePoint: Int, ctrlDown: Boolean, session: TerminalSession?): Boolean {
         clearMods()
