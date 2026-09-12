@@ -2,44 +2,71 @@
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent" android:layout_height="match_parent"
     android:orientation="vertical" android:background="@color/larz_bg"
-    android:padding="20dp">
-
-    <TextView
-        android:layout_width="wrap_content" android:layout_height="wrap_content"
-        android:text="Voice" android:textColor="@color/larz_text"
-        android:textSize="22sp" android:textStyle="bold"
-        android:layout_marginBottom="4dp" />
-
-    <TextView
-        android:id="@+id/voice_status"
-        android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:textColor="@color/larz_muted" android:textSize="14sp"
-        android:layout_marginBottom="16dp" />
-
-    <ScrollView
-        android:id="@+id/voice_scroll"
-        android:layout_width="match_parent" android:layout_height="0dp"
-        android:layout_weight="1" android:background="#0B1020"
-        android:padding="12dp" android:layout_marginBottom="16dp">
-        <TextView
-            android:id="@+id/voice_transcript"
-            android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:textColor="@color/larz_text" android:textSize="14sp"
-            android:fontFamily="monospace" android:textIsSelectable="true" />
-    </ScrollView>
-
-    <Button
-        android:id="@+id/voice_mic"
-        android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:text="🎤  Tap to talk"
-        android:backgroundTint="@color/larz_lambda" android:textColor="#04121A"
-        android:textSize="16sp"
-        android:layout_marginBottom="14dp" />
+    android:padding="18dp">
 
     <LinearLayout
         android:layout_width="match_parent" android:layout_height="wrap_content"
         android:orientation="horizontal" android:gravity="center_vertical"
         android:layout_marginBottom="14dp">
+        <TextView
+            android:layout_width="0dp" android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Voice" android:textColor="@color/larz_text"
+            android:textSize="22sp" android:textStyle="bold" />
+        <View
+            android:id="@+id/voice_status_dot"
+            android:layout_width="9dp" android:layout_height="9dp"
+            android:layout_marginEnd="7dp" />
+        <TextView
+            android:id="@+id/voice_status"
+            android:textColor="@color/larz_muted" android:textSize="13sp"
+            android:layout_width="wrap_content" android:layout_height="wrap_content" />
+    </LinearLayout>
+
+    <ScrollView
+        android:id="@+id/voice_scroll"
+        android:layout_width="match_parent" android:layout_height="0dp"
+        android:layout_weight="1" android:layout_marginBottom="10dp">
+        <LinearLayout
+            android:id="@+id/voice_transcript_box"
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="vertical" />
+    </ScrollView>
+
+    <LinearLayout
+        android:id="@+id/voice_hearing_panel"
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:orientation="vertical" android:visibility="gone"
+        android:background="#0B1020" android:padding="8dp"
+        android:layout_marginBottom="12dp">
+        <TextView
+            android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:text="HEARING" android:textColor="@color/larz_muted"
+            android:textSize="10sp" android:letterSpacing="0.1"
+            android:layout_marginBottom="4dp" />
+        <ScrollView
+            android:id="@+id/voice_hearing_scroll"
+            android:layout_width="match_parent" android:layout_height="76dp">
+            <TextView
+                android:id="@+id/voice_hearing_log"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:textColor="#7a8798" android:textSize="12sp"
+                android:fontFamily="monospace" />
+        </ScrollView>
+    </LinearLayout>
+
+    <Button
+        android:id="@+id/voice_mic"
+        android:layout_width="match_parent" android:layout_height="56dp"
+        android:text="Tap to talk"
+        android:backgroundTint="@color/larz_lambda" android:textColor="#04121A"
+        android:textSize="16sp" android:textStyle="bold"
+        android:layout_marginBottom="12dp" />
+
+    <LinearLayout
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:orientation="horizontal" android:gravity="center_vertical"
+        android:layout_marginBottom="6dp">
         <TextView
             android:layout_width="0dp" android:layout_height="wrap_content"
             android:layout_weight="1"
@@ -53,8 +80,8 @@
     <TextView
         android:layout_width="match_parent" android:layout_height="wrap_content"
         android:text="Runs Claude with full tool access and no per-action confirmation - see the LarzOS docs before enabling on a device you don\'t fully trust."
-        android:textColor="@color/larz_muted" android:textSize="11.5sp"
-        android:layout_marginBottom="14dp" />
+        android:textColor="@color/larz_muted" android:textSize="11sp"
+        android:layout_marginBottom="10dp" />
 
     <Button
         android:id="@+id/voice_reset"

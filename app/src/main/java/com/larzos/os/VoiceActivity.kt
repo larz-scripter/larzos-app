@@ -3,6 +3,8 @@ package com.larzos.os
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -10,31 +12,43 @@ import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
+import android.util.TypedValue
+import android.view.Gravity
 import android.view.View
 import android.widget.Button
+import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import java.util.ArrayDeque
 import java.util.Locale
 
 /**
  * Voice chat with Claude: tap-to-talk or say "Doctor Larz" to wake it,
  * speak your prompt, it runs headlessly via ClaudeVoiceBridge (full tool
  * access - see that class's doc comment for the permission tradeoff) and
- * speaks the reply back. Everything here is best-effort scaffolding that
- * needs real on-device testing: SpeechRecognizer/TextToSpeech behaviour
- * varies a lot by device and installed voice-input app.
+ * speaks the reply back.
+ *
+ * Chat-style transcript (bubbles, not a single scrolling text blob) plus a
+ * live "HEARING" panel that shows every phrase the wake-word loop
+ * transcribes, matched or not - added after on-device testing found no way
+ * to tell whether the mic/recognizer was even working while "listening for
+ * Doctor Larz" was on.
  */
 class VoiceActivity : AppCompatActivity() {
 
     private enum class State { IDLE, WAKE_LISTENING, LISTENING, THINKING, SPEAKING }
 
-    private lateinit var status: TextView
-    private lateinit var transcript: TextView
+    private lateinit var statusDot: View
+    private lateinit var statusText: TextView
+    private lateinit var transcriptBox: LinearLayout
     private lateinit var scroll: ScrollView
+    private lateinit var hearingPanel: View
+    private lateinit var hearingLog: TextView
+    private lateinit var hearingScroll: ScrollView
     private lateinit var micButton: Button
     private lateinit var wakeSwitch: Switch
     private lateinit var resetButton: Button
@@ -45,6 +59,7 @@ class VoiceActivity : AppCompatActivity() {
     private var wakeWord: WakeWordDetector? = null
     private var state = State.IDLE
     private val handler = Handler(Looper.getMainLooper())
+    private val heardLines = ArrayDeque<String>()
 
     private val micPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) onMicTapped() else toast("Voice needs microphone access.")
@@ -53,9 +68,13 @@ class VoiceActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_voice)
-        status = findViewById(R.id.voice_status)
-        transcript = findViewById(R.id.voice_transcript)
+        statusDot = findViewById(R.id.voice_status_dot)
+        statusText = findViewById(R.id.voice_status)
+        transcriptBox = findViewById(R.id.voice_transcript_box)
         scroll = findViewById(R.id.voice_scroll)
+        hearingPanel = findViewById(R.id.voice_hearing_panel)
+        hearingLog = findViewById(R.id.voice_hearing_log)
+        hearingScroll = findViewById(R.id.voice_hearing_scroll)
         micButton = findViewById(R.id.voice_mic)
         wakeSwitch = findViewById(R.id.voice_wake_switch)
         resetButton = findViewById(R.id.voice_reset)
@@ -65,22 +84,16 @@ class VoiceActivity : AppCompatActivity() {
 
         micButton.setOnClickListener { onMicTapped() }
         wakeSwitch.setOnCheckedChangeListener { _, checked ->
+            hearingPanel.visibility = if (checked) View.VISIBLE else View.GONE
             if (checked) startWakeListening() else stopWakeListening()
         }
         resetButton.setOnClickListener {
             (application as LarzApp).env.resetVoiceSession()
-            transcript.text = ""
+            transcriptBox.removeAllViews()
             toast("Conversation reset - next turn starts fresh.")
         }
 
         setState(State.IDLE)
-    }
-
-    override fun onPause() {
-        super.onPause()
-        // Wake-word listening is meant to keep running while this screen is
-        // open but backgrounded briefly (e.g. you switch apps to check
-        // something); stopping only on onDestroy avoids surprising drops.
     }
 
     override fun onDestroy() {
@@ -111,9 +124,10 @@ class VoiceActivity : AppCompatActivity() {
             return
         }
         setState(State.WAKE_LISTENING)
-        wakeWord?.start {
-            handler.post { startCommandListening() }
-        }
+        wakeWord?.start(
+            onWake = { handler.post { startCommandListening() } },
+            onHeard = { phrase -> handler.post { appendHeard(phrase) } }
+        )
     }
 
     private fun stopWakeListening() {
@@ -145,7 +159,7 @@ class VoiceActivity : AppCompatActivity() {
                 if (said.isNullOrBlank()) {
                     backToIdleOrWake()
                 } else {
-                    appendTranscript("You", said)
+                    appendTranscript("You", said, isUser = true)
                     askClaude(said)
                 }
             }
@@ -174,7 +188,7 @@ class VoiceActivity : AppCompatActivity() {
         Thread {
             val result = ClaudeVoiceBridge.ask(env, prompt)
             handler.post {
-                appendTranscript("Claude", result.text)
+                appendTranscript("Doctor Larz", result.text, isUser = false)
                 speak(result.text)
             }
         }.start()
@@ -200,35 +214,90 @@ class VoiceActivity : AppCompatActivity() {
         if (wakeSwitch.isChecked) startWakeListening() else setState(State.IDLE)
     }
 
-    // ---- small helpers ----------------------------------------------------
+    // ---- state / status ---------------------------------------------------
 
     private fun setState(s: State) {
         state = s
-        status.text = when (s) {
-            State.IDLE -> "Tap the mic, or turn on \"Doctor Larz\" below."
-            State.WAKE_LISTENING -> "Listening for “Doctor Larz”…"
+        val (color, label) = when (s) {
+            State.IDLE -> "#3a4557" to "Tap the mic, or turn on “Doctor Larz” below"
+            State.WAKE_LISTENING -> "#22D3EE" to "Listening for “Doctor Larz”…"
+            State.LISTENING -> "#22D3EE" to "Listening…"
+            State.THINKING -> "#F5A524" to "Thinking…"
+            State.SPEAKING -> "#00C896" to "Speaking…"
+        }
+        statusText.text = label
+        val dot = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.parseColor(color)) }
+        statusDot.background = dot
+        micButton.isEnabled = s == State.IDLE || s == State.WAKE_LISTENING
+        micButton.alpha = if (micButton.isEnabled) 1f else 0.5f
+        micButton.text = when (s) {
             State.LISTENING -> "Listening…"
             State.THINKING -> "Thinking…"
             State.SPEAKING -> "Speaking…"
+            else -> "🎤  Tap to talk"
         }
-        micButton.isEnabled = s == State.IDLE || s == State.WAKE_LISTENING
     }
 
-    private fun appendTranscript(who: String, text: String) {
-        transcript.append("$who: $text\n\n")
+    // ---- transcript / hearing log ------------------------------------------
+
+    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+
+    private fun appendTranscript(who: String, text: String, isUser: Boolean) {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = if (isUser) Gravity.END else Gravity.START
+            val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            lp.setMargins(0, dp(4), 0, dp(4))
+            layoutParams = lp
+        }
+        val bubble = TextView(this).apply {
+            this.text = text
+            setTextColor(Color.parseColor(if (isUser) "#04121A" else "#E8EDF5"))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setPadding(dp(13), dp(9), dp(13), dp(9))
+            maxWidth = (resources.displayMetrics.widthPixels * 0.8f).toInt()
+            background = GradientDrawable().apply {
+                cornerRadius = dp(14).toFloat()
+                setColor(Color.parseColor(if (isUser) "#22D3EE" else "#141c2e"))
+            }
+        }
+        row.addView(bubble)
+        transcriptBox.addView(row)
         scroll.post { scroll.fullScroll(View.FOCUS_DOWN) }
     }
 
-    /** Best-effort cleanup so TTS doesn't read out raw markdown syntax. */
-    private fun stripForSpeech(s: String): String = s
-        .replace(Regex("```[\\s\\S]*?```"), " code block omitted ")
-        .replace(Regex("`([^`]*)`"), "$1")
-        .replace(Regex("(?m)^#{1,6}\\s*"), "")
-        .replace(Regex("\\*\\*([^*]*)\\*\\*"), "$1")
-        .replace(Regex("\\*([^*]*)\\*"), "$1")
-        .replace(Regex("(?m)^[-*]\\s+"), "")
-        .replace(Regex("\\n{2,}"), ". ")
-        .trim()
+    private fun appendHeard(phrase: String) {
+        heardLines.addLast(phrase)
+        while (heardLines.size > 12) heardLines.removeFirst()
+        hearingLog.text = heardLines.joinToString("\n")
+        hearingScroll.post { hearingScroll.fullScroll(View.FOCUS_DOWN) }
+    }
+
+    /**
+     * Defense in depth, not the real fix: ClaudeVoiceBridge appends a system
+     * prompt telling Claude this is a spoken interface, which is what
+     * actually stops it answering in markdown tables/lists in the first
+     * place (confirmed on-device: a "check the server" reply came back as a
+     * full markdown table before that existed). This just cleans up
+     * whatever formatting slips through anyway.
+     */
+    private fun stripForSpeech(s: String): String {
+        val noTableRows = s.lineSequence().filterNot { line ->
+            val t = line.trim()
+            (t.startsWith("|") && t.endsWith("|")) || Regex("^[|\\-:\\s]+$").matches(t) && t.isNotEmpty()
+        }.joinToString("\n")
+        return noTableRows
+            .replace(Regex("```[\\s\\S]*?```"), " code block omitted ")
+            .replace(Regex("`([^`]*)`"), "$1")
+            .replace(Regex("(?m)^#{1,6}\\s*"), "")
+            .replace(Regex("\\*\\*([^*]*)\\*\\*"), "$1")
+            .replace(Regex("\\*([^*]*)\\*"), "$1")
+            .replace(Regex("(?m)^\\s*[-*]\\s+"), "")
+            .replace(Regex("(?m)^\\s*\\d+\\.\\s+"), "")
+            .replace(Regex("\\|"), " ")
+            .replace(Regex("\\n{2,}"), ". ")
+            .trim()
+    }
 
     private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
 }
