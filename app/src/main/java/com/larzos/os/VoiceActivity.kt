@@ -12,6 +12,7 @@ import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
@@ -64,6 +65,10 @@ class VoiceActivity : AppCompatActivity() {
     private val handler = Handler(Looper.getMainLooper())
     private val heardLines = ArrayDeque<String>()
     private var lastLoggedHeard: String? = null
+    private var utteranceCounter = 0
+    private var finalUtteranceId: String? = null
+    private var pendingSpeechCount = 0
+    private var lastNarrationText: String? = null
 
     private val micPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) onMicTapped() else toast("Voice needs microphone access.")
@@ -85,7 +90,32 @@ class VoiceActivity : AppCompatActivity() {
         wakeButton = findViewById(R.id.voice_wake_button)
         resetButton = findViewById(R.id.voice_reset)
 
-        tts = TextToSpeech(this) { code -> ttsReady = (code == TextToSpeech.SUCCESS) }
+        tts = TextToSpeech(this) { code ->
+            ttsReady = (code == TextToSpeech.SUCCESS)
+            if (ttsReady) {
+                // Set once, not per utterance: narration snippets and the
+                // final answer are queued in order (QUEUE_ADD, see
+                // queueSpeech) so they play one after another without
+                // cutting each other off - only the LAST queued one should
+                // trigger the return to idle/wake-listening.
+                tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                    override fun onStart(utteranceId: String?) {}
+                    override fun onDone(utteranceId: String?) {
+                        handler.post {
+                            if (pendingSpeechCount > 0) pendingSpeechCount--
+                            if (utteranceId != null && utteranceId == finalUtteranceId) backToIdleOrWake()
+                        }
+                    }
+                    @Deprecated("required override")
+                    override fun onError(utteranceId: String?) {
+                        handler.post {
+                            if (pendingSpeechCount > 0) pendingSpeechCount--
+                            if (utteranceId != null && utteranceId == finalUtteranceId) backToIdleOrWake()
+                        }
+                    }
+                })
+            }
+        }
         wakeWord = SpeechRecognizerWakeWordDetector(this)
 
         micButton.setOnClickListener { onMicTapped() }
@@ -101,6 +131,12 @@ class VoiceActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        // ClaudeVoiceBridge runs the actual claude process on its own
+        // background thread, independent of this Activity - closing this
+        // screen mid-task doesn't (and shouldn't) kill a big task partway
+        // through. Its callbacks still fire afterwards though (guarded by
+        // Activity.isDestroyed - see askClaude) so they don't touch views
+        // that no longer exist.
         wakeWord?.stop()
         commandRecognizer?.let { runCatching { it.destroy() } }
         tts?.let { runCatching { it.stop(); it.shutdown() } }
@@ -224,30 +260,66 @@ class VoiceActivity : AppCompatActivity() {
 
     private fun askClaude(prompt: String) {
         setState(State.THINKING)
+        finalUtteranceId = null
+        pendingSpeechCount = 0
+        lastNarrationText = null
         val env = (application as LarzApp).env
-        Thread {
-            val result = ClaudeVoiceBridge.ask(env, prompt)
-            handler.post {
-                appendTranscript("Doctor Larz", result.text, isUser = false)
-                speak(result.text)
+        // ClaudeVoiceBridge.ask() streams: onNarration fires zero or more
+        // times while the turn is still running (a tool starting, the
+        // model's own interim commentary, a "still working" heartbeat if it
+        // goes quiet) so a long/multi-step task doesn't read as broken from
+        // total silence - each gets spoken and shown in the status line as
+        // it arrives, in order, without interrupting each other. onDone
+        // fires exactly once with the final answer, which also gets its own
+        // permanent transcript bubble. Both callbacks fire on a background
+        // thread; hop to the main thread before touching any views.
+        ClaudeVoiceBridge.ask(env, prompt,
+            onNarration = { text ->
+                handler.post {
+                    if (isDestroyed) return@post
+                    // Visual feedback is never throttled - only the spoken
+                    // queue is, so the status line always shows the latest
+                    // even if TTS is a step or two behind.
+                    if (state == State.THINKING) statusText.text = text
+                    if (text != lastNarrationText) {
+                        lastNarrationText = text
+                        queueSpeech(text, isFinal = false)
+                    }
+                }
+            },
+            onDone = { result ->
+                handler.post {
+                    if (isDestroyed) return@post
+                    appendTranscript("Doctor Larz", result.text, isUser = false)
+                    setState(State.SPEAKING)
+                    queueSpeech(result.text, isFinal = true)
+                }
             }
-        }.start()
+        )
     }
 
-    private fun speak(text: String) {
-        setState(State.SPEAKING)
+    /** Queues one utterance after whatever's already speaking (QUEUE_ADD) -
+     *  narration and the final answer play in the order they were produced,
+     *  never cutting each other off. Only the utterance marked [isFinal]
+     *  triggers the return to idle/wake-listening once it finishes.
+     *
+     *  A task with several quick tool calls in a row could otherwise queue
+     *  up "Running a command." many times over and end up narrating minutes
+     *  behind actual progress by the time TTS works through the backlog -
+     *  non-final narration is dropped (never the final answer) once two are
+     *  already waiting to be spoken, so the spoken queue stays roughly
+     *  caught up with what's actually happening instead of trailing it. */
+    private fun queueSpeech(text: String, isFinal: Boolean) {
         val spoken = stripForSpeech(text)
         if (!ttsReady || spoken.isBlank()) {
-            backToIdleOrWake()
+            if (isFinal) backToIdleOrWake()
             return
         }
-        tts?.setOnUtteranceProgressListener(object : android.speech.tts.UtteranceProgressListener() {
-            override fun onStart(utteranceId: String?) {}
-            override fun onDone(utteranceId: String?) { handler.post { backToIdleOrWake() } }
-            @Deprecated("required override")
-            override fun onError(utteranceId: String?) { handler.post { backToIdleOrWake() } }
-        })
-        tts?.speak(spoken, TextToSpeech.QUEUE_FLUSH, null, "larz-voice-reply")
+        if (!isFinal && pendingSpeechCount >= 2) return
+        val id = "larz-voice-" + (utteranceCounter++)
+        if (isFinal) finalUtteranceId = id
+        pendingSpeechCount++
+        tts?.speak(spoken, TextToSpeech.QUEUE_ADD, null, id)
     }
 
     private fun backToIdleOrWake() {
