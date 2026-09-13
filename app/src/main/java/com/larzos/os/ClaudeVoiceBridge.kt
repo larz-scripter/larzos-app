@@ -1,17 +1,30 @@
 package com.larzos.os
 
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.BufferedReader
 import java.io.File
+import java.io.InputStreamReader
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
 /**
- * Runs `claude -p` headlessly inside the proot guest for one voice turn -
- * no PTY, just a plain process with stdout captured. Print mode's default
- * text output is already just the final reply (no TUI boxes/spinners),
- * which is what makes this workable for text-to-speech at all - see
- * VoiceActivity for the wake-word/STT/TTS side.
+ * Runs `claude -p` inside the proot guest for one voice turn, streaming -
+ * not one long silent blocking call. A "big task" (multi-step, several tool
+ * calls) used to mean total silence from "Thinking..." until a single final
+ * answer, which reads as broken even when it's working fine. This instead
+ * parses Claude Code's own --output-format stream-json event stream
+ * (schema confirmed by actually running `claude -p --output-format
+ * stream-json --include-partial-messages --verbose` and inspecting the
+ * real output - not guessed) and narrates as it goes: a short line when a
+ * tool starts, brief interim commentary the model itself produces between
+ * steps, and a periodic "still working" heartbeat if it goes quiet for a
+ * while - see VoiceActivity for how those get queued as speech alongside
+ * the final answer, in order, without cutting each other off.
  *
  * Conversation continuity: a fixed per-install session id (LarzEnv.
  * voiceSessionId) is created on the first turn (--session-id) and resumed
@@ -30,26 +43,24 @@ import java.util.concurrent.TimeUnit
  * proot with fake root (-0) for apt/package-manager compatibility, which
  * would otherwise make every voice turn fail with exactly that refusal.
  * LarzSession.prootArgvForCommand() defaults fakeRoot to false for
- * exactly this reason - confirmed via an on-device run that hit the
- * refusal before that fix landed.
+ * exactly this reason.
  *
  * Every turn is appended to LarzEnv.voiceLogFile (also bind-mounted into
- * the guest at ~/voice/voice.log) - the raw command, exit code, and full
- * output, regardless of success, for on-device debugging.
+ * the guest at ~/voice/voice.log) - the raw command and the tail of the
+ * raw event stream, regardless of success, for on-device debugging.
  */
 object ClaudeVoiceBridge {
 
-    private const val TIMEOUT_SEC = 120L
     private const val WORKDIR = "/root/voice"
+    // A "big task" can legitimately run long (several tool calls, a slow
+    // command) - this is a safety net against a genuinely hung process, not
+    // the primary pacing mechanism; the heartbeat below is what actually
+    // keeps a long wait from feeling broken.
+    private const val OVERALL_TIMEOUT_MS = 20 * 60 * 1000L
+    private const val HEARTBEAT_START_MS = 15_000L
+    private const val HEARTBEAT_MAX_MS = 90_000L
     private val LOG_TS = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US)
 
-    // Without this, Claude answers the way it would in the interactive
-    // terminal - markdown tables, headers, bullet lists - which a plain
-    // stripForSpeech() pass can only partially clean up before
-    // TextToSpeech reads it (confirmed on-device: a server-inspection
-    // reply came back as a full markdown table, read aloud almost
-    // verbatim). Telling it directly that this is a spoken interface goes
-    // straight to the root cause instead of scrubbing the output after.
     private const val VOICE_SYSTEM_PROMPT =
         "You are being used through a voice interface right now: the user is " +
         "speaking to you, and your reply will be read aloud by text-to-speech, " +
@@ -58,31 +69,72 @@ object ClaudeVoiceBridge {
         "blocks, no asterisks or other formatting symbols. If something is " +
         "naturally tabular or code, describe the key point in plain words instead " +
         "of rendering it. Keep answers brief and conversational unless the user " +
-        "clearly asks for more detail. " +
+        "clearly asks for more detail. On a task with several steps, brief " +
+        "one-sentence updates between steps are welcome - the user is listening, " +
+        "not reading, and wants to know it's actually progressing. " +
         "In this voice interface specifically, you are 'Doctor Larz', the voice " +
         "assistant for LarzOS - introduce yourself that way if asked who you are, " +
         "and do not mention Claude, Claude Code, or Anthropic by name here."
 
     data class Result(val ok: Boolean, val text: String)
 
-    fun ask(env: LarzEnv, prompt: String): Result {
+    /**
+     * [onNarration] fires zero or more times with short spoken-worthy
+     * updates while the turn is running - a tool starting, the model's own
+     * interim commentary, or a "still working" heartbeat. [onDone] fires
+     * exactly once with the final answer. Both fire on a background
+     * thread - callers hop back to the main thread themselves.
+     */
+    fun ask(env: LarzEnv, prompt: String, onNarration: (String) -> Unit, onDone: (Result) -> Unit) {
+        Thread({ runTurn(env, prompt, onNarration, onDone) }, "claude-voice-turn").start()
+    }
+
+    private fun runTurn(env: LarzEnv, prompt: String, onNarration: (String) -> Unit, onDone: (Result) -> Unit) {
         val guestClaude = resolveClaudeGuestPath(env)
         if (guestClaude == null) {
             val msg = "Claude isn't installed in LarzOS yet - open the terminal and run `claude` once first."
-            log(env, prompt, null, -1, msg)
-            return Result(false, msg)
+            log(env, prompt, null, msg)
+            onDone(Result(false, msg))
+            return
         }
 
         val firstTurn = !env.voiceSessionMarker.exists()
         val sessionFlags = if (firstTurn)
             listOf("--session-id", env.voiceSessionId) else listOf("--resume", env.voiceSessionId)
 
-        val guestCmd = mutableListOf(guestClaude, "-p", "--dangerously-skip-permissions")
+        val guestCmd = mutableListOf(
+            guestClaude, "-p", "--dangerously-skip-permissions",
+            "--output-format", "stream-json", "--include-partial-messages", "--verbose"
+        )
         guestCmd += listOf("--append-system-prompt", VOICE_SYSTEM_PROMPT)
         guestCmd += sessionFlags
         guestCmd += prompt   // one argv element - proot/ProcessBuilder need no shell quoting
 
         val argv = LarzSession.prootArgvForCommand(env, WORKDIR, guestCmd)
+        val lastEventAt = AtomicLong(System.currentTimeMillis())
+        val done = AtomicBoolean(false)
+        val rawLog = StringBuilder()
+        var lastAssistantText: String? = null
+        var finalResultText: String? = null
+        var finalOk = false
+        var process: Process? = null
+
+        val heartbeat = Thread({
+            var threshold = HEARTBEAT_START_MS
+            try {
+                while (!done.get()) {
+                    Thread.sleep(1000)
+                    if (done.get()) break
+                    val idleMs = System.currentTimeMillis() - lastEventAt.get()
+                    if (idleMs >= threshold) {
+                        onNarration("Still working on it.")
+                        lastEventAt.set(System.currentTimeMillis())
+                        threshold = minOf(threshold * 2, HEARTBEAT_MAX_MS)
+                    }
+                }
+            } catch (ignored: InterruptedException) {}
+        }, "claude-voice-heartbeat").apply { isDaemon = true }
+
         try {
             val pb = ProcessBuilder(argv)
             pb.environment().clear()
@@ -91,38 +143,94 @@ object ClaudeVoiceBridge {
                 if (i > 0) pb.environment()[kv.substring(0, i)] = kv.substring(i + 1)
             }
             pb.redirectErrorStream(true)
-            val process = pb.start()
+            val p = pb.start()
+            process = p
             // claude waits ~3s to see if anything is coming on stdin before
-            // giving up and printing a warning - we never have anything to
-            // send, so close it immediately instead of leaving it open
-            // (inherited from this process, which never writes to it either).
-            runCatching { process.outputStream.close() }
-            val output = process.inputStream.bufferedReader().use { it.readText() }
-            val finished = process.waitFor(TIMEOUT_SEC, TimeUnit.SECONDS)
+            // giving up and printing a warning - we never send anything, so
+            // close it immediately instead of leaving it open/inherited.
+            runCatching { p.outputStream.close() }
+            heartbeat.start()
 
-            if (!finished) {
-                process.destroyForcibly()
-                log(env, prompt, guestCmd, -1, output + "\n[timed out after ${TIMEOUT_SEC}s]")
-                return Result(false, "Claude took too long to answer.")
+            val reader = BufferedReader(InputStreamReader(p.inputStream))
+            val startAt = System.currentTimeMillis()
+            while (true) {
+                if (System.currentTimeMillis() - startAt > OVERALL_TIMEOUT_MS) {
+                    runCatching { p.destroyForcibly() }
+                    rawLog.append("[killed after exceeding ${OVERALL_TIMEOUT_MS / 60000} minute safety timeout]\n")
+                    break
+                }
+                val line = try { reader.readLine() } catch (t: Throwable) { null } ?: break
+                lastEventAt.set(System.currentTimeMillis())
+                if (line.isBlank()) continue
+                rawLog.append(line).append('\n')
+                try {
+                    val evt = JSONObject(line)
+                    when (evt.optString("type")) {
+                        "assistant" -> {
+                            val content = evt.optJSONObject("message")?.optJSONArray("content") ?: JSONArray()
+                            for (i in 0 until content.length()) {
+                                val block = content.getJSONObject(i)
+                                when (block.optString("type")) {
+                                    "text" -> {
+                                        val t = block.optString("text", "").trim()
+                                        if (t.isNotEmpty()) {
+                                            lastAssistantText = t
+                                            onNarration(t)
+                                        }
+                                    }
+                                    "tool_use" -> onNarration(narrationForTool(block.optString("name", "")))
+                                }
+                            }
+                        }
+                        "result" -> {
+                            finalOk = !evt.optBoolean("is_error", false)
+                            finalResultText = evt.optString("result", "").trim()
+                        }
+                    }
+                } catch (parseErr: Throwable) {
+                    // Not every line is JSON we recognise (a stray CLI
+                    // warning printed to stdout, a future event type, etc.)
+                    // - skip it, never let one bad line kill the turn.
+                }
             }
-            val code = process.exitValue()
-            log(env, prompt, guestCmd, code, output)
-            if (code != 0 && output.isBlank()) {
-                return Result(false, "Claude couldn't answer that (exit $code).")
+            done.set(true)
+            runCatching { heartbeat.interrupt() }
+            if (!p.waitFor(5, TimeUnit.SECONDS)) runCatching { p.destroyForcibly() }
+
+            val text = finalResultText?.takeIf { it.isNotEmpty() } ?: lastAssistantText
+            if (text != null) {
+                if (firstTurn) env.voiceSessionMarker.writeText("1")
+                log(env, prompt, guestCmd, rawLog.toString().takeLast(4000))
+                onDone(Result(finalOk || finalResultText == null, text))
+            } else {
+                log(env, prompt, guestCmd, rawLog.toString().takeLast(4000))
+                onDone(Result(false, "Claude couldn't answer that."))
             }
-            if (firstTurn) env.voiceSessionMarker.writeText("1")
-            return Result(true, output.trim())
         } catch (t: Throwable) {
-            log(env, prompt, guestCmd, -1, t.stackTraceToString())
-            return Result(false, "Voice bridge failed: ${t.message}")
+            done.set(true)
+            runCatching { heartbeat.interrupt() }
+            runCatching { process?.destroyForcibly() }
+            log(env, prompt, guestCmd, t.stackTraceToString())
+            onDone(Result(false, "Voice bridge failed: ${t.message}"))
         }
     }
 
-    private fun log(env: LarzEnv, prompt: String, guestCmd: List<String>?, exitCode: Int, output: String) {
+    private fun narrationForTool(name: String): String = when (name) {
+        "Bash" -> "Running a command."
+        "Edit", "Write", "NotebookEdit" -> "Editing a file."
+        "Read" -> "Reading a file."
+        "WebFetch", "WebSearch" -> "Searching."
+        "Task" -> "Delegating part of this to a subagent."
+        "Skill" -> "Using a skill."
+        "Agent" -> "Starting a subagent."
+        else -> "Working on it."
+    }
+
+    private fun log(env: LarzEnv, prompt: String, guestCmd: List<String>?, output: String) {
         runCatching {
             env.voiceLogFile.appendText(
                 buildString {
-                    append("=== ").append(LOG_TS.format(Date())).append(" exit=").append(exitCode).append(" ===\n")
+                    append("=== ").append(LOG_TS.format(Date())).append(" ===\n")
                     append("prompt: ").append(prompt).append('\n')
                     if (guestCmd != null) append("cmd: ").append(guestCmd.joinToString(" ")).append('\n')
                     append(output.trim()).append("\n\n")
