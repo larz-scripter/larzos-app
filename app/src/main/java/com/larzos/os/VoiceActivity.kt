@@ -59,6 +59,8 @@ class VoiceActivity : AppCompatActivity() {
     private var ttsReady = false
     private var commandRecognizer: SpeechRecognizer? = null
     private var wakeWord: WakeWordDetector? = null
+    private var interruptListener: WakeWordDetector? = null
+    private var currentTurn: ClaudeVoiceBridge.VoiceTurn? = null
     private var state = State.IDLE
     private var wakeEnabled = false
     private var hearingExpanded = false
@@ -69,6 +71,10 @@ class VoiceActivity : AppCompatActivity() {
     private var finalUtteranceId: String? = null
     private var pendingSpeechCount = 0
     private var lastNarrationText: String? = null
+    // One-off acknowledgments ("Yes boss?") register a completion callback
+    // here instead of going through the narration queue/finalUtteranceId -
+    // see speakThen().
+    private val utteranceCallbacks = mutableMapOf<String, () -> Unit>()
 
     private val micPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) onMicTapped() else toast("Voice needs microphone access.")
@@ -100,19 +106,9 @@ class VoiceActivity : AppCompatActivity() {
                 // trigger the return to idle/wake-listening.
                 tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                     override fun onStart(utteranceId: String?) {}
-                    override fun onDone(utteranceId: String?) {
-                        handler.post {
-                            if (pendingSpeechCount > 0) pendingSpeechCount--
-                            if (utteranceId != null && utteranceId == finalUtteranceId) backToIdleOrWake()
-                        }
-                    }
+                    override fun onDone(utteranceId: String?) { handler.post { onUtteranceFinished(utteranceId) } }
                     @Deprecated("required override")
-                    override fun onError(utteranceId: String?) {
-                        handler.post {
-                            if (pendingSpeechCount > 0) pendingSpeechCount--
-                            if (utteranceId != null && utteranceId == finalUtteranceId) backToIdleOrWake()
-                        }
-                    }
+                    override fun onError(utteranceId: String?) { handler.post { onUtteranceFinished(utteranceId) } }
                 })
             }
         }
@@ -147,12 +143,27 @@ class VoiceActivity : AppCompatActivity() {
     // ---- mic / wake word -----------------------------------------------
 
     private fun onMicTapped() {
-        if (hasMicPermission()) {
-            if (state == State.LISTENING) return
-            if (wakeEnabled) { wakeEnabled = false; wakeWord?.stop(); updateWakeButton() }
-            startCommandListening()
-        } else {
+        if (!hasMicPermission()) {
             micPermission.launch(Manifest.permission.RECORD_AUDIO)
+            return
+        }
+        when (state) {
+            State.LISTENING -> return  // already listening for a command
+            State.THINKING, State.SPEAKING -> {
+                // Manual equivalent of saying "stop" - tapping mid-task or
+                // mid-answer used to just start a second recognizer session
+                // on top of the still-running one (a real latent bug: two
+                // things fighting for the mic/TTS at once). Interrupt first,
+                // then go straight into listening rather than routing
+                // through backToIdleOrWake() (which could start the
+                // wake-word recognizer only to immediately replace it here).
+                resetActiveTurn()
+                startCommandListening()
+            }
+            else -> {
+                if (wakeEnabled) { wakeEnabled = false; wakeWord?.stop(); updateWakeButton() }
+                startCommandListening()
+            }
         }
     }
 
@@ -191,7 +202,12 @@ class VoiceActivity : AppCompatActivity() {
         wakeWord?.start(
             onWake = {
                 env.appendWakeLog("MATCHED -> starting command turn")
-                handler.post { startCommandListening() }
+                // A spoken acknowledgment that it actually heard the wake
+                // word - requested explicitly so it's clear when it's your
+                // turn to talk, instead of guessing whether it caught it.
+                // Waits for "Yes boss?" to actually finish before opening
+                // the mic, so the recognizer doesn't pick up its own voice.
+                handler.post { speakThen("Yes boss?") { startCommandListening() } }
             },
             onHeard = { phrase ->
                 // Partial results repeat the same growing prefix many times
@@ -263,6 +279,7 @@ class VoiceActivity : AppCompatActivity() {
         finalUtteranceId = null
         pendingSpeechCount = 0
         lastNarrationText = null
+        startInterruptListening()
         val env = (application as LarzApp).env
         // ClaudeVoiceBridge.ask() streams: onNarration fires zero or more
         // times while the turn is still running (a tool starting, the
@@ -273,7 +290,7 @@ class VoiceActivity : AppCompatActivity() {
         // fires exactly once with the final answer, which also gets its own
         // permanent transcript bubble. Both callbacks fire on a background
         // thread; hop to the main thread before touching any views.
-        ClaudeVoiceBridge.ask(env, prompt,
+        currentTurn = ClaudeVoiceBridge.ask(env, prompt,
             onNarration = { text ->
                 handler.post {
                     if (isDestroyed) return@post
@@ -290,9 +307,19 @@ class VoiceActivity : AppCompatActivity() {
             onDone = { result ->
                 handler.post {
                     if (isDestroyed) return@post
+                    currentTurn = null
                     appendTranscript("Doctor Larz", result.text, isUser = false)
                     setState(State.SPEAKING)
-                    queueSpeech(result.text, isFinal = true)
+                    if (result.alreadySpoken) {
+                        // The last streamed narration chunk WAS the final
+                        // answer, word for word - it already got spoken once
+                        // as it streamed in (see ClaudeVoiceBridge). Saying
+                        // it again back to back was a real bug found
+                        // on-device.
+                        backToIdleOrWake()
+                    } else {
+                        queueSpeech(result.text, isFinal = true)
+                    }
                 }
             }
         )
@@ -322,8 +349,73 @@ class VoiceActivity : AppCompatActivity() {
         tts?.speak(spoken, TextToSpeech.QUEUE_ADD, null, id)
     }
 
+    /** One TTS utterance finished (successfully or not) - either it was a
+     *  one-off acknowledgment with its own registered callback (speakThen),
+     *  or it's part of the normal narration/answer queue, in which case
+     *  only the one marked final should trigger returning to idle/wake. */
+    private fun onUtteranceFinished(utteranceId: String?) {
+        if (pendingSpeechCount > 0) pendingSpeechCount--
+        val callback = utteranceId?.let { utteranceCallbacks.remove(it) }
+        if (callback != null) {
+            callback()
+        } else if (utteranceId != null && utteranceId == finalUtteranceId) {
+            backToIdleOrWake()
+        }
+    }
+
+    /** Speaks one short acknowledgment immediately (flushing anything else
+     *  queued - nothing meaningful should be mid-speech at the point this
+     *  is used) and runs [onComplete] once it's actually finished, so the
+     *  mic doesn't start listening while the ack is still being spoken. */
+    private fun speakThen(text: String, onComplete: () -> Unit) {
+        if (!ttsReady) { onComplete(); return }
+        val id = "larz-voice-ack-" + (utteranceCounter++)
+        utteranceCallbacks[id] = onComplete
+        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, id)
+    }
+
     private fun backToIdleOrWake() {
+        stopInterruptListening()
         if (wakeEnabled) startWakeListening() else setState(State.IDLE)
+    }
+
+    // ---- interrupting a running/speaking turn ("stop talking") -----------
+
+    /** Active only during THINKING/SPEAKING - listens for "stop"/"cancel"/
+     *  "never mind" so a big task or a long answer can be interrupted by
+     *  voice instead of needing to wait it out or tap the screen. */
+    private fun startInterruptListening() {
+        if (!hasMicPermission()) return
+        interruptListener?.stop()
+        interruptListener = SpeechRecognizerWakeWordDetector(this) { SpeechRecognizerWakeWordDetector.matchesStopPhrase(it) }
+        interruptListener?.start(onWake = { handler.post { onInterrupted() } })
+    }
+
+    private fun stopInterruptListening() {
+        interruptListener?.stop()
+        interruptListener = null
+    }
+
+    /** Stops any speech in progress and cancels the running turn, if any -
+     *  shared by the voice interrupt ("stop") and tapping the mic mid-task,
+     *  which need the same cleanup but different next steps. */
+    private fun resetActiveTurn() {
+        tts?.stop()
+        currentTurn?.cancel()
+        currentTurn = null
+        pendingSpeechCount = 0
+        finalUtteranceId = null
+        utteranceCallbacks.clear()
+        stopInterruptListening()
+    }
+
+    /** Cuts off whatever's running/speaking and goes straight back to
+     *  idle/wake-listening, ready for a new command - no "cancelled"
+     *  announcement, since the user just said "stop" and already knows. */
+    private fun onInterrupted() {
+        if (state != State.THINKING && state != State.SPEAKING) return
+        resetActiveTurn()
+        backToIdleOrWake()
     }
 
     // ---- state / status ---------------------------------------------------

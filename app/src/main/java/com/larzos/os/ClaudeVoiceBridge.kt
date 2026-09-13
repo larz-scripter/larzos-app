@@ -76,20 +76,40 @@ object ClaudeVoiceBridge {
         "assistant for LarzOS - introduce yourself that way if asked who you are, " +
         "and do not mention Claude, Claude Code, or Anthropic by name here."
 
-    data class Result(val ok: Boolean, val text: String)
+    data class Result(val ok: Boolean, val text: String, val alreadySpoken: Boolean = false)
+
+    /** Handle to an in-flight turn - VoiceActivity calls [cancel] when the
+     *  user interrupts by voice ("stop talking") or by tapping the mic
+     *  while a turn is running. Cancelling kills the underlying process and
+     *  suppresses [onDone] entirely - the caller has already moved on by
+     *  the time it would fire, so there's nothing useful to tell it. */
+    class VoiceTurn internal constructor() {
+        @Volatile internal var process: Process? = null
+        @Volatile var cancelled = false
+            private set
+        fun cancel() {
+            cancelled = true
+            runCatching { process?.destroyForcibly() }
+        }
+    }
 
     /**
      * [onNarration] fires zero or more times with short spoken-worthy
      * updates while the turn is running - a tool starting, the model's own
      * interim commentary, or a "still working" heartbeat. [onDone] fires
-     * exactly once with the final answer. Both fire on a background
-     * thread - callers hop back to the main thread themselves.
+     * exactly once with the final answer (unless cancelled). Both fire on a
+     * background thread - callers hop back to the main thread themselves.
      */
-    fun ask(env: LarzEnv, prompt: String, onNarration: (String) -> Unit, onDone: (Result) -> Unit) {
-        Thread({ runTurn(env, prompt, onNarration, onDone) }, "claude-voice-turn").start()
+    fun ask(env: LarzEnv, prompt: String, onNarration: (String) -> Unit, onDone: (Result) -> Unit): VoiceTurn {
+        val turn = VoiceTurn()
+        Thread({ runTurn(env, prompt, turn, onNarration, onDone) }, "claude-voice-turn").start()
+        return turn
     }
 
-    private fun runTurn(env: LarzEnv, prompt: String, onNarration: (String) -> Unit, onDone: (Result) -> Unit) {
+    private fun runTurn(
+        env: LarzEnv, prompt: String, turn: VoiceTurn,
+        onNarration: (String) -> Unit, onDone: (Result) -> Unit
+    ) {
         val guestClaude = resolveClaudeGuestPath(env)
         if (guestClaude == null) {
             val msg = "Claude isn't installed in LarzOS yet - open the terminal and run `claude` once first."
@@ -117,14 +137,13 @@ object ClaudeVoiceBridge {
         var lastAssistantText: String? = null
         var finalResultText: String? = null
         var finalOk = false
-        var process: Process? = null
 
         val heartbeat = Thread({
             var threshold = HEARTBEAT_START_MS
             try {
                 while (!done.get()) {
                     Thread.sleep(1000)
-                    if (done.get()) break
+                    if (done.get() || turn.cancelled) break
                     val idleMs = System.currentTimeMillis() - lastEventAt.get()
                     if (idleMs >= threshold) {
                         onNarration("Still working on it.")
@@ -144,7 +163,8 @@ object ClaudeVoiceBridge {
             }
             pb.redirectErrorStream(true)
             val p = pb.start()
-            process = p
+            turn.process = p
+            if (turn.cancelled) { runCatching { p.destroyForcibly() }; return } // interrupted before it even started
             // claude waits ~3s to see if anything is coming on stdin before
             // giving up and printing a warning - we never send anything, so
             // close it immediately instead of leaving it open/inherited.
@@ -154,6 +174,7 @@ object ClaudeVoiceBridge {
             val reader = BufferedReader(InputStreamReader(p.inputStream))
             val startAt = System.currentTimeMillis()
             while (true) {
+                if (turn.cancelled) { runCatching { p.destroyForcibly() }; break }
                 if (System.currentTimeMillis() - startAt > OVERALL_TIMEOUT_MS) {
                     runCatching { p.destroyForcibly() }
                     rawLog.append("[killed after exceeding ${OVERALL_TIMEOUT_MS / 60000} minute safety timeout]\n")
@@ -175,10 +196,10 @@ object ClaudeVoiceBridge {
                                         val t = block.optString("text", "").trim()
                                         if (t.isNotEmpty()) {
                                             lastAssistantText = t
-                                            onNarration(t)
+                                            if (!turn.cancelled) onNarration(t)
                                         }
                                     }
-                                    "tool_use" -> onNarration(narrationForTool(block.optString("name", "")))
+                                    "tool_use" -> if (!turn.cancelled) onNarration(narrationForTool(block.optString("name", "")))
                                 }
                             }
                         }
@@ -197,19 +218,28 @@ object ClaudeVoiceBridge {
             runCatching { heartbeat.interrupt() }
             if (!p.waitFor(5, TimeUnit.SECONDS)) runCatching { p.destroyForcibly() }
 
+            log(env, prompt, guestCmd, rawLog.toString().takeLast(4000))
+            if (turn.cancelled) return  // user already moved on - nothing to report
+
             val text = finalResultText?.takeIf { it.isNotEmpty() } ?: lastAssistantText
             if (text != null) {
                 if (firstTurn) env.voiceSessionMarker.writeText("1")
-                log(env, prompt, guestCmd, rawLog.toString().takeLast(4000))
-                onDone(Result(finalOk || finalResultText == null, text))
+                // The final "result" event almost always repeats the exact
+                // text of the last streamed assistant turn verbatim (that's
+                // literally what it is) - onNarration() already spoke it
+                // once as it streamed in, so mark it alreadySpoken instead
+                // of queuing the same sentence again (on-device testing
+                // caught this: replies were read twice back to back).
+                val alreadySpoken = finalResultText != null && finalResultText == lastAssistantText
+                onDone(Result(finalOk || finalResultText == null, text, alreadySpoken))
             } else {
-                log(env, prompt, guestCmd, rawLog.toString().takeLast(4000))
                 onDone(Result(false, "Claude couldn't answer that."))
             }
         } catch (t: Throwable) {
             done.set(true)
             runCatching { heartbeat.interrupt() }
-            runCatching { process?.destroyForcibly() }
+            runCatching { turn.process?.destroyForcibly() }
+            if (turn.cancelled) return
             log(env, prompt, guestCmd, t.stackTraceToString())
             onDone(Result(false, "Voice bridge failed: ${t.message}"))
         }
