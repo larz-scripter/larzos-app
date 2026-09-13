@@ -56,13 +56,24 @@ interface WakeWordDetector {
  * things like "large", "lars", "larsh". matchesWakeWord() normalizes the
  * transcript and accepts anything starting with "doctor"/"dr" followed
  * within two words by something within edit distance 2 of "larz".
+ *
+ * [matcher] is pluggable - defaults to matchesWakeWord, but the same class
+ * also runs as the "stop talking" interrupt listener during THINKING/
+ * SPEAKING (see VoiceActivity) with [matchesStopPhrase] instead. One
+ * continuous-SpeechRecognizer-loop implementation, two different phrases
+ * to listen for.
  */
-class SpeechRecognizerWakeWordDetector(private val context: Context) : WakeWordDetector {
+class SpeechRecognizerWakeWordDetector(
+    private val context: Context,
+    private val matcher: (String) -> Boolean = Companion::matchesWakeWord
+) : WakeWordDetector {
 
     companion object {
         private const val TAG = "WakeWordDetector"
         private const val RESTART_DELAY_MS = 300L
         private const val ERROR_BACKOFF_MS = 1500L
+
+        private val STOP_PHRASES = listOf("stop talking", "stop", "cancel", "never mind", "nevermind")
 
         private fun normalize(s: String): String =
             s.lowercase(Locale.US).replace(Regex("[^a-z0-9\\s]"), " ").replace(Regex("\\s+"), " ").trim()
@@ -91,6 +102,15 @@ class SpeechRecognizerWakeWordDetector(private val context: Context) : WakeWordD
                 }
             }
             return false
+        }
+
+        /** Deliberately a short, distinctive list - not generic words like
+         *  "quiet" that TTS's own spoken output might plausibly contain,
+         *  which the mic could pick back up (no acoustic echo cancellation
+         *  is done here) and misfire on. */
+        fun matchesStopPhrase(heard: String): Boolean {
+            val norm = normalize(heard)
+            return STOP_PHRASES.any { norm.contains(it) }
         }
     }
 
@@ -169,7 +189,7 @@ class SpeechRecognizerWakeWordDetector(private val context: Context) : WakeWordD
         val heard = bundle?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION).orEmpty()
         val top = heard.firstOrNull()
         if (!top.isNullOrBlank()) onHeard(top)
-        if (heard.any { matchesWakeWord(it) }) {
+        if (heard.any { matcher(it) }) {
             stop()
             onWake()
         }
