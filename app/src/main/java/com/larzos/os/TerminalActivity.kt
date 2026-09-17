@@ -167,6 +167,8 @@ class TerminalActivity : AppCompatActivity(), TerminalSessionClient, TerminalVie
         val navColor = Color.parseColor("#1d3a2e")
         val voiceBtn = keyButton("🎤") { startActivity(Intent(this, VoiceActivity::class.java)) }
             .apply { setBackgroundColor(navColor) }
+        val desktopBtn = keyButton("🖥") { startActivity(Intent(this, DesktopActivity::class.java)) }
+            .apply { setBackgroundColor(navColor) }
         val settingsBtn = keyButton("⚙") { startActivity(Intent(this, SystemAccessActivity::class.java)) }
             .apply { setBackgroundColor(navColor) }
         val divider = View(this).apply {
@@ -180,6 +182,7 @@ class TerminalActivity : AppCompatActivity(), TerminalSessionClient, TerminalVie
             setBackgroundColor(Color.parseColor("#0B1020"))
             setPadding(dp(4), dp(2), dp(4), dp(2))
             addView(voiceBtn)
+            addView(desktopBtn)
             addView(settingsBtn)
             addView(divider)
             addView(scroller)

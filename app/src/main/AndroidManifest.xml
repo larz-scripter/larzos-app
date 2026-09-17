@@ -19,6 +19,15 @@
     <!-- Voice mode (VoiceActivity, WakeWordDetector) -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
+    <!-- DesktopActivity hands off to an installed vnc:// viewer (e.g. AVNC) -
+         needed on API 30+ for queryIntentActivities to see it at all. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="vnc" />
+        </intent>
+    </queries>
+
     <application
         android:name=".LarzApp"
         android:allowBackup="false"
@@ -53,6 +62,11 @@
             android:name=".SystemAccessActivity"
             android:exported="false"
             android:label="System access" />
+
+        <activity
+            android:name=".DesktopActivity"
+            android:exported="false"
+            android:label="Desktop" />
 
         <activity
             android:name=".VoiceActivity"

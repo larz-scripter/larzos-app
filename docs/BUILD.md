@@ -56,4 +56,13 @@ sessions need to close.
 3. Fix proot args until `larz code` runs a Claude Code session.
 4. Add: storage bind mounts, persistent `/root`, a "reset LarzOS" action,
    font-size controls, an extra-keys row (Esc/Tab/Ctrl/arrows).
-5. Later: a VNC/desktop mode (bundle a lightweight VNC client + a guest Xvnc).
+5. **Desktop (GUI).** Done, launch + handoff form: the 🖥 button
+   (`DesktopActivity`) installs/starts `larz-gui` (larzos-linux v0.1.13+,
+   Openbox/tint2 over TigerVNC on `127.0.0.1:5901`) inside the guest, then
+   fires a `vnc://` intent to whatever viewer is installed (AVNC on
+   F-Droid if none is). Still open: true in-process rendering with no
+   second app at all — would mean vendoring AVNC's `ui/vnc/` renderer/
+   input code plus a brand-new native NDK/CMake/vcpkg build for
+   `libvncserver` (this app currently has zero in-tree native
+   compilation). Big enough to be its own effort once this simpler flow
+   is confirmed working on a device.

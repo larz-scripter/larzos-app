@@ -20,6 +20,10 @@ executor; the user sees LarzOS.
    a submodule) is attached to `proot … /usr/bin/larzsh -l`.
 4. That's the app. `larz`, `larz-system`, `larz code`, `apt` — all work; the
    guest just has no systemd (no PID 1 in a proot), same as the Termux edition.
+5. The 🖥 **Desktop** button installs and starts `larz-gui` (larzos-linux's
+   Openbox/tint2 graphical desktop over VNC) inside the guest, then hands off
+   to a `vnc://`-capable viewer app (e.g. [AVNC](https://f-droid.org/packages/com.gaurav.avnc/))
+   to actually render it.
 
 ## Build
 
