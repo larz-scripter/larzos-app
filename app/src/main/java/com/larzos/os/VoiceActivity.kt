@@ -309,6 +309,7 @@ class VoiceActivity : AppCompatActivity() {
                     if (isDestroyed) return@post
                     currentTurn = null
                     appendTranscript("Doctor Larz", result.text, isUser = false)
+                    if (result.needsSetup) appendSignInButton()
                     setState(State.SPEAKING)
                     if (result.alreadySpoken) {
                         // The last streamed narration chunk WAS the final
@@ -466,6 +467,31 @@ class VoiceActivity : AppCompatActivity() {
             }
         }
         row.addView(bubble)
+        transcriptBox.addView(row)
+        scroll.post { scroll.fullScroll(View.FOCUS_DOWN) }
+    }
+
+    /** One-tap Claude sign-in, shown under the reply when Claude isn't signed in. */
+    private fun appendSignInButton() {
+        val btn = Button(this).apply {
+            text = "Sign in with Claude"
+            isAllCaps = false
+            setTextColor(Color.parseColor("#08131c"))
+            setPadding(dp(18), dp(10), dp(18), dp(10))
+            background = GradientDrawable().apply {
+                cornerRadius = dp(14).toFloat()
+                setColor(Color.parseColor("#22D3EE"))
+            }
+            setOnClickListener { startActivity(TerminalActivity.signInIntent(this@VoiceActivity)) }
+        }
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.START
+            val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            lp.setMargins(0, dp(4), 0, dp(4))
+            layoutParams = lp
+        }
+        row.addView(btn)
         transcriptBox.addView(row)
         scroll.post { scroll.fullScroll(View.FOCUS_DOWN) }
     }

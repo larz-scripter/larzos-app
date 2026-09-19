@@ -76,7 +76,19 @@ object ClaudeVoiceBridge {
         "assistant for LarzOS - introduce yourself that way if asked who you are, " +
         "and do not mention Claude, Claude Code, or Anthropic by name here."
 
-    data class Result(val ok: Boolean, val text: String, val alreadySpoken: Boolean = false)
+    /** [needsSetup]: Claude isn't signed in - VoiceActivity offers a one-tap
+     *  sign-in instead of just reading the error out. */
+    data class Result(
+        val ok: Boolean, val text: String,
+        val alreadySpoken: Boolean = false, val needsSetup: Boolean = false
+    )
+
+    // What `claude -p` says when there's no usable login (both "Not logged in"
+    // and an expired/invalid token end with this), verified against the real
+    // CLI. Spoken instead of that raw text, which reads as if it were an answer.
+    private const val SIGN_IN_MESSAGE =
+        "I'm not signed in yet. Tap the sign in button on screen to connect your Claude subscription."
+    private fun isSignInProblem(text: String) = text.contains("/login")
 
     /** Handle to an in-flight turn - VoiceActivity calls [cancel] when the
      *  user interrupts by voice ("stop talking") or by tapping the mic
@@ -108,11 +120,12 @@ object ClaudeVoiceBridge {
 
     private fun runTurn(
         env: LarzEnv, prompt: String, turn: VoiceTurn,
-        onNarration: (String) -> Unit, onDone: (Result) -> Unit
+        onNarration: (String) -> Unit, onDone: (Result) -> Unit,
+        retried: Boolean = false
     ) {
         val guestClaude = resolveClaudeGuestPath(env)
         if (guestClaude == null) {
-            val msg = "Claude isn't installed in LarzOS yet - open the terminal and run `claude` once first."
+            val msg = "Claude Code isn't installed in LarzOS yet - open the terminal and run larz-code to install it."
             log(env, prompt, null, msg)
             onDone(Result(false, msg))
             return
@@ -135,8 +148,15 @@ object ClaudeVoiceBridge {
         val done = AtomicBoolean(false)
         val rawLog = StringBuilder()
         var lastAssistantText: String? = null
+        var lastNarrated: String? = null   // what onNarration() actually spoke
         var finalResultText: String? = null
         var finalOk = false
+        // The marker and the session's transcript can disagree: the marker
+        // lives outside the rootfs, the transcript inside it. Either way round
+        // claude says so on stderr (merged into the stream below) and we retry
+        // once with the other flag.
+        var staleSession = false      // --resume, but no such conversation
+        var sessionInUse = false      // --session-id, but it already exists
 
         val heartbeat = Thread({
             var threshold = HEARTBEAT_START_MS
@@ -184,6 +204,8 @@ object ClaudeVoiceBridge {
                 lastEventAt.set(System.currentTimeMillis())
                 if (line.isBlank()) continue
                 rawLog.append(line).append('\n')
+                if (!firstTurn && line.contains("No conversation found with session ID")) staleSession = true
+                if (firstTurn && line.contains("is already in use")) sessionInUse = true
                 try {
                     val evt = JSONObject(line)
                     when (evt.optString("type")) {
@@ -196,7 +218,12 @@ object ClaudeVoiceBridge {
                                         val t = block.optString("text", "").trim()
                                         if (t.isNotEmpty()) {
                                             lastAssistantText = t
-                                            if (!turn.cancelled) onNarration(t)
+                                            // A sign-in error is replaced by SIGN_IN_MESSAGE
+                                            // below - don't also read the raw text aloud.
+                                            if (!turn.cancelled && !isSignInProblem(t)) {
+                                                lastNarrated = t
+                                                onNarration(t)
+                                            }
                                         }
                                     }
                                     "tool_use" -> if (!turn.cancelled) onNarration(narrationForTool(block.optString("name", "")))
@@ -218,19 +245,33 @@ object ClaudeVoiceBridge {
             runCatching { heartbeat.interrupt() }
             if (!p.waitFor(5, TimeUnit.SECONDS)) runCatching { p.destroyForcibly() }
 
+            if (!retried && !turn.cancelled && (staleSession || sessionInUse)) {
+                log(env, prompt, guestCmd, "voice session out of sync (stale=$staleSession inUse=$sessionInUse) - retrying\n" +
+                    rawLog.toString().takeLast(1000))
+                if (staleSession) env.voiceSessionMarker.delete() else env.voiceSessionMarker.writeText("1")
+                runTurn(env, prompt, turn, onNarration, onDone, retried = true)
+                return
+            }
+
             log(env, prompt, guestCmd, rawLog.toString().takeLast(4000))
             if (turn.cancelled) return  // user already moved on - nothing to report
 
             val text = finalResultText?.takeIf { it.isNotEmpty() } ?: lastAssistantText
             if (text != null) {
+                // A signed-out first turn still creates the session on disk
+                // (verified), so the marker below is right even then.
                 if (firstTurn) env.voiceSessionMarker.writeText("1")
+                if (!finalOk && isSignInProblem(text)) {
+                    onDone(Result(false, SIGN_IN_MESSAGE, needsSetup = true))
+                    return
+                }
                 // The final "result" event almost always repeats the exact
                 // text of the last streamed assistant turn verbatim (that's
                 // literally what it is) - onNarration() already spoke it
                 // once as it streamed in, so mark it alreadySpoken instead
                 // of queuing the same sentence again (on-device testing
                 // caught this: replies were read twice back to back).
-                val alreadySpoken = finalResultText != null && finalResultText == lastAssistantText
+                val alreadySpoken = finalResultText != null && finalResultText == lastNarrated
                 onDone(Result(finalOk || finalResultText == null, text, alreadySpoken))
             } else {
                 onDone(Result(false, "Claude couldn't answer that."))
