@@ -6,7 +6,10 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.Typeface
+import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.KeyEvent
@@ -15,6 +18,7 @@ import android.view.View
 import android.view.WindowManager
 import android.view.inputmethod.InputMethodManager
 import android.widget.Button
+import android.widget.Toast
 import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import androidx.appcompat.app.AppCompatActivity
@@ -40,9 +44,32 @@ class TerminalActivity : AppCompatActivity(), TerminalSessionClient, TerminalVie
     private var alt = false
     private var shift = false
     private var fn = false
+    // Claude sign-in (see signInIntent): the command to type once the shell
+    // is at a prompt, and the browser hand-off for the URL it prints.
+    private var pendingCommand: String? = null
+    private var watchForLoginUrl = false
+    private var loginUrlCandidate: String? = null
+    private val ui = Handler(Looper.getMainLooper())
     private var ctrlBtn: Button? = null
     private var altBtn: Button? = null
     private var shiftBtn: Button? = null
+
+    companion object {
+        private const val EXTRA_SIGN_IN = "com.larzos.os.SIGN_IN_CLAUDE"
+        // --claudeai = the Claude subscription flow (the default; spelled out so
+        // it can't silently become the API-billing Console flow).
+        private const val SIGN_IN_COMMAND = "claude auth login --claudeai"
+        // The sign-in page is on claude.ai / claude.com (or console.anthropic.com).
+        private val LOGIN_URL = Regex(
+            """https://(?:[A-Za-z0-9-]+\.)*(?:claude\.ai|claude\.com|anthropic\.com)/\S+""")
+
+        /** Bring the terminal forward and run the Claude subscription sign-in in it. */
+        fun signInIntent(ctx: Context): Intent =
+            Intent(ctx, TerminalActivity::class.java)
+                .putExtra(EXTRA_SIGN_IN, true)
+                // reuse the running terminal (and its shell) rather than start a second one
+                .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -80,7 +107,62 @@ class TerminalActivity : AppCompatActivity(), TerminalSessionClient, TerminalVie
         view.post { showKeyboard() }
         startService(Intent(this, LarzSessionService::class.java))
         startService(Intent(this, LarzPrivService::class.java))
+        handleSignInIntent(intent)
     }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleSignInIntent(intent)
+        showKeyboard()
+    }
+
+    private fun handleSignInIntent(i: Intent?) {
+        val intent = i ?: return
+        if (!intent.getBooleanExtra(EXTRA_SIGN_IN, false)) return
+        intent.removeExtra(EXTRA_SIGN_IN)
+        pendingCommand = SIGN_IN_COMMAND
+        watchForLoginUrl = true
+        loginUrlCandidate = null
+        sendPendingIfAtPrompt()
+    }
+
+    /** Type the queued command once the shell is idle at a prompt (a cold start
+     *  is still booting, so sending straight away would be lost or mangled). */
+    private fun sendPendingIfAtPrompt() {
+        val cmd = pendingCommand ?: return
+        val s = session ?: return
+        val text = s.emulator?.screen?.transcriptTextWithFullLinesJoined ?: return
+        val tail = text.trimEnd()
+        if (!tail.endsWith("$") && !tail.endsWith("#")) return
+        pendingCommand = null
+        s.write(cmd + "\r")
+        toast("Signing in to Claude - the sign-in page will open in your browser.")
+    }
+
+    /**
+     * When the sign-in prints its URL, open it. The terminal may deliver the URL
+     * in pieces and a half-printed line looks complete, so only open it once the
+     * same URL has been seen twice, ~0.7s apart.
+     */
+    private fun maybeOpenLoginUrl() {
+        if (!watchForLoginUrl) return
+        val s = session ?: return
+        val url = LOGIN_URL.find(s.emulator?.screen?.transcriptTextWithFullLinesJoined ?: return)?.value ?: return
+        if (url != loginUrlCandidate) {
+            loginUrlCandidate = url
+            ui.postDelayed({ maybeOpenLoginUrl() }, 700)
+            return
+        }
+        watchForLoginUrl = false
+        val opened = runCatching {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }.isSuccess
+        toast(if (opened) "Sign in, copy the code shown, come back here and tap Paste."
+              else "Couldn't open a browser - long-press the link in the terminal to copy it.")
+    }
+
+    private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
 
     override fun onResume() {
         super.onResume()
@@ -141,6 +223,7 @@ class TerminalActivity : AppCompatActivity(), TerminalSessionClient, TerminalVie
         bar.addView(altBtn)
         bar.addView(shiftBtn)
         bar.addView(keyButton("Tab") { code(KeyEvent.KEYCODE_TAB) })
+        bar.addView(keyButton("Paste") { onPasteTextFromClipboard(session); showKeyboard() })
         bar.addView(keyButton("←") { code(KeyEvent.KEYCODE_DPAD_LEFT) })
         bar.addView(keyButton("↑") { code(KeyEvent.KEYCODE_DPAD_UP) })
         bar.addView(keyButton("↓") { code(KeyEvent.KEYCODE_DPAD_DOWN) })
@@ -224,7 +307,11 @@ class TerminalActivity : AppCompatActivity(), TerminalSessionClient, TerminalVie
     }
 
     // --- TerminalSessionClient ---
-    override fun onTextChanged(changedSession: TerminalSession) { view.onScreenUpdated() }
+    override fun onTextChanged(changedSession: TerminalSession) {
+        view.onScreenUpdated()
+        if (pendingCommand != null) sendPendingIfAtPrompt()
+        if (watchForLoginUrl) maybeOpenLoginUrl()
+    }
     override fun onTitleChanged(changedSession: TerminalSession) {}
     override fun onSessionFinished(finishedSession: TerminalSession) { finish() }
     override fun onCopyTextToClipboard(session: TerminalSession, text: String?) {

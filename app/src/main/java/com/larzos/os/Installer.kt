@@ -16,6 +16,51 @@ class Installer(private val env: LarzEnv) {
 
     fun interface Progress { fun update(pct: Int, msg: String) }
 
+    // Claude Code's sign-in (~/.claude/.credentials.json), settings and every
+    // conversation live in the guest's home. A base-system update wipes and
+    // re-extracts the whole rootfs, which used to sign you out of Claude and,
+    // worse, orphan the voice session ClaudeVoiceBridge resumes (its id and
+    // marker live outside the rootfs, its transcript did not).
+    private val claudeState = listOf(".claude", ".claude.json")
+    private val claudeStash: File get() = File(env.root, "claude-state-stash")
+
+    /**
+     * Park Claude's state outside the rootfs across the swap. Best effort: a
+     * failure only means signing in again, so it must never fail the install.
+     * An existing stash is deliberately kept, not cleared - it is the only
+     * copy if a previous install was killed between stashing and restoring.
+     */
+    private fun stashClaudeState() {
+        runCatching {
+            val stash = claudeStash.apply { mkdirs() }
+            for (name in claudeState) {
+                val src = File(env.rootfs, "root/$name")
+                if (!src.exists()) continue
+                val dest = File(stash, name)
+                dest.deleteRecursively()
+                src.renameTo(dest)   // same filesystem: an atomic move, not a copy
+            }
+        }
+    }
+
+    /** Put the stash back into the fresh rootfs; keep it if any entry failed. */
+    private fun restoreClaudeState() {
+        runCatching {
+            val stash = claudeStash
+            if (!stash.isDirectory) return
+            val home = File(env.rootfs, "root").apply { mkdirs() }
+            var allBack = true
+            for (name in claudeState) {
+                val kept = File(stash, name)
+                if (!kept.exists()) continue
+                val dest = File(home, name)
+                dest.deleteRecursively()
+                if (!kept.renameTo(dest)) allBack = false
+            }
+            if (allBack) stash.deleteRecursively()
+        }
+    }
+
     @Throws(IOException::class)
     fun install(onProgress: Progress) {
         env.ensureDirs()
@@ -31,10 +76,12 @@ class Installer(private val env: LarzEnv) {
         download(url, tmpTar, onProgress)
 
         onProgress.update(-1, "Unpacking the system…")
+        stashClaudeState()
         if (env.rootfs.exists()) env.rootfs.deleteRecursively()
         env.rootfs.mkdirs()
         extractTarGz(tmpTar, env.rootfs, onProgress)
         tmpTar.delete()
+        restoreClaudeState()
 
         postExtractFixups()
         // line 1 = the rootfs asset this was built from, so the app knows to
