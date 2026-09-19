@@ -37,7 +37,18 @@ object LarzSession {
         // when it sees UID 0, for its own good reason - so the one-shot
         // voice invocation (ClaudeVoiceBridge) needs this OFF to report the
         // real non-root UID instead and actually be allowed to run.
-        if (fakeRoot) args += "-0"
+        // Who the guest thinks it is. Both are cosmetic - proot is unprivileged
+        // ptrace, so real file access is governed by the Android app UID either
+        // way - but tools do read it:
+        //  - fake root (-0): what apt / `larz install` need; they refuse to run
+        //    otherwise. `claude` hard-refuses --dangerously-skip-permissions
+        //    when it sees UID 0.
+        //  - the guest's `larz` user (-i 1000:1000): the default. The guest
+        //    passwd has larz as uid/gid 1000, so `id`, the prompt and ~ all say
+        //    larz, and claude accepts --dangerously-skip-permissions.
+        // (Not -i with the raw app UID: that has no passwd entry, so the shell
+        // would greet you as "I have no name!".)
+        args += if (fakeRoot) listOf("-0") else listOf("-i", "$LARZ_UID:$LARZ_UID")
         args += listOf(
             // host bindings the guest needs
             "-b", "/dev",
@@ -73,6 +84,7 @@ object LarzSession {
         if (env.sharedStorageAvailable) {
             val shared = android.os.Environment.getExternalStorageDirectory().absolutePath
             args += listOf("-b", "$shared:/root/storage/shared")
+            args += listOf("-b", "$shared:/home/larz/storage/shared")
         }
         // Shell-UID command bridge (see LarzPrivService + the `larz-priv`
         // guest script) - the per-install token that authenticates the
@@ -90,9 +102,14 @@ object LarzSession {
         return args
     }
 
-    private val guestEnv = listOf(
+    private const val LARZ_UID = 1000
+
+    /** The guest environment for [root] (fake root) or the `larz` user. */
+    private fun guestEnv(root: Boolean): List<String> = listOf(
         "/usr/bin/env", "-i",
-        "HOME=/root",
+        "HOME=${if (root) "/root" else "/home/larz"}",
+        "USER=${if (root) "root" else "larz"}",
+        "LOGNAME=${if (root) "root" else "larz"}",
         "TERM=xterm-256color",
         "LANG=C.UTF-8",
         "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
@@ -105,11 +122,11 @@ object LarzSession {
      * ending in the guest command. Feed this to TerminalSession as
      * (shellPath = args[0], args = args.drop(1)).
      */
-    fun prootArgv(env: LarzEnv): List<String> {
+    fun prootArgv(env: LarzEnv, asRoot: Boolean = false): List<String> {
         env.ensureGuestPaths()
-        val args = commonArgs(env)
-        args += listOf("-w", "/root")
-        args += guestEnv
+        val args = commonArgs(env, fakeRoot = asRoot)
+        args += listOf("-w", if (asRoot) "/root" else "/home/larz")
+        args += guestEnv(asRoot)
         val login = if (java.io.File(env.rootfs, LOGIN.removePrefix("/")).exists())
             LOGIN else LOGIN_FALLBACK
         args += listOf(login, "-l")
@@ -128,7 +145,7 @@ object LarzSession {
         env.ensureGuestPaths()
         val args = commonArgs(env, fakeRoot)
         args += listOf("-w", workdir)
-        args += guestEnv
+        args += guestEnv(fakeRoot)
         args += guestCmd
         return args
     }
