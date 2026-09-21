@@ -155,7 +155,13 @@ object LarzSession {
         add("PROOT_TMP_DIR=${env.prootTmp.absolutePath}")
         add("PROOT_LOADER=${env.prootLoader.absolutePath}")
         if (env.prootLoader32.exists()) add("PROOT_LOADER_32=${env.prootLoader32.absolutePath}")
-        add("PROOT_L2S_DIR=${env.l2s.absolutePath}")
+        // Must be the CANONICAL path (symlinks resolved), not just an absolute one: proot
+        // only turns an emulated hard link's target back into a guest path when this
+        // directory is textually under the rootfs it resolved itself. Android's
+        // filesDir is /data/user/0/<pkg>/files, a symlink to /data/data/<pkg>/files, so
+        // the plain path mismatched, the link targets stayed host paths, and every file
+        // with a second hard link failed to open (git add/commit/clone all break).
+        add("PROOT_L2S_DIR=${runCatching { env.l2s.canonicalPath }.getOrDefault(env.l2s.absolutePath)}")
         add("HOME=${env.root.absolutePath}")
         add("TMPDIR=${env.prootTmp.absolutePath}")
         add("LD_LIBRARY_PATH=${env.nativeDir}")
