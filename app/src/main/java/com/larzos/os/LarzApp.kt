@@ -24,8 +24,13 @@ class LarzEnv(app: Application) {
     /** Writable tmp for proot itself (PROOT_TMP_DIR). */
     val prootTmp: File = File(root, "tmp")
 
-    /** proot's symlink-to-symlink emulation dir (PROOT_L2S_DIR). */
-    val l2s: File = File(root, "l2s")
+    /** proot's hard-link emulation dir (PROOT_L2S_DIR). It MUST be inside the
+     *  rootfs: proot stores the real file here and leaves a symlink holding the
+     *  absolute host path, which it can only translate back into the guest for
+     *  paths under the rootfs or a bind. Outside it every emulated hard link
+     *  dangled inside the guest - which is what broke shadow's lock files
+     *  (`groupadd: /etc/group.N file stat error`, so no adduser/useradd). */
+    val l2s: File = File(rootfs, ".l2s")
 
     /** Marker written once the rootfs is fully unpacked and set up.
      *  Line 1 is the rootfs asset name it was built from. */
@@ -51,7 +56,7 @@ class LarzEnv(app: Application) {
     val isInstalled: Boolean get() = installedMarker.exists() && rootfs.isDirectory
 
     fun ensureDirs() {
-        listOf(root, prootTmp, l2s).forEach { it.mkdirs() }
+        listOf(root, prootTmp).forEach { it.mkdirs() }   // l2s lives in the rootfs: see ensureGuestPaths
     }
 
     // Header-only stand-in for the /proc/net connection tables Android hides
@@ -135,8 +140,10 @@ class LarzEnv(app: Application) {
      */
     fun ensureGuestPaths() {
         if (!rootfs.isDirectory) return
+        l2s.mkdirs()
         File(rootfs, "root/voice").mkdirs()
         File(rootfs, "root/storage/shared").mkdirs()
+        File(rootfs, "home/larz/storage/shared").mkdirs()   // ~/storage/shared for the larz user
         File(rootfs, "root/.larz-priv-token").apply {
             if (!exists()) runCatching { parentFile?.mkdirs(); writeText("") }
         }

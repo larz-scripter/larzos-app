@@ -16,6 +16,71 @@ class Installer(private val env: LarzEnv) {
 
     fun interface Progress { fun update(pct: Int, msg: String) }
 
+    // A base-system update wipes and re-extracts the whole rootfs. That used to
+    // take the user's home folders with it - files, shell history, and Claude
+    // Code's sign-in (~/.claude/.credentials.json) and conversations, including
+    // the voice session ClaudeVoiceBridge resumes (its id and marker live
+    // outside the rootfs, its transcript did not). So: park the contents of the
+    // home folders outside the rootfs across the swap and put them back after.
+    // Only the homes - the system itself (/usr, /etc, ...) is meant to be
+    // replaced. The proot hard-link store (.l2s) goes with them, because links
+    // inside a home are symlinks into it.
+    private val keptHomes = listOf("root", "home/larz")
+    private val homeStash: File get() = File(env.root, "home-stash")
+
+    /**
+     * Best effort - a failure only costs the user their files being reset, so it
+     * must never fail the install. An existing stash is deliberately kept, not
+     * cleared: it is the only copy if a previous install was killed between
+     * stashing and restoring. Moves are renames on one filesystem (atomic, and
+     * instant however large the home is), not copies.
+     */
+    private fun stashHomes() {
+        runCatching {
+            val stash = homeStash.apply { mkdirs() }
+            for (home in keptHomes) {
+                val src = File(env.rootfs, home)
+                if (!src.isDirectory) continue
+                val dst = File(stash, home).apply { mkdirs() }
+                for (child in src.listFiles().orEmpty()) {
+                    val kept = File(dst, child.name)
+                    kept.deleteRecursively()
+                    child.renameTo(kept)
+                }
+            }
+            val links = env.l2s
+            if (links.exists()) {
+                File(stash, ".l2s").deleteRecursively()
+                links.renameTo(File(stash, ".l2s"))
+            }
+        }
+    }
+
+    /** Merge the stash into the fresh rootfs; keep it if any entry failed to move. */
+    private fun restoreHomes() {
+        runCatching {
+            val stash = homeStash
+            if (!stash.isDirectory) return
+            var allBack = true
+            for (home in keptHomes) {
+                val kept = File(stash, home)
+                if (!kept.isDirectory) continue
+                val dest = File(env.rootfs, home).apply { mkdirs() }
+                for (child in kept.listFiles().orEmpty()) {
+                    val target = File(dest, child.name)
+                    target.deleteRecursively()
+                    if (!child.renameTo(target)) allBack = false
+                }
+            }
+            val links = File(stash, ".l2s")
+            if (links.exists()) {
+                env.l2s.deleteRecursively()
+                if (!links.renameTo(env.l2s)) allBack = false
+            }
+            if (allBack) stash.deleteRecursively()
+        }
+    }
+
     @Throws(IOException::class)
     fun install(onProgress: Progress) {
         env.ensureDirs()
@@ -31,10 +96,12 @@ class Installer(private val env: LarzEnv) {
         download(url, tmpTar, onProgress)
 
         onProgress.update(-1, "Unpacking the system…")
+        stashHomes()
         if (env.rootfs.exists()) env.rootfs.deleteRecursively()
         env.rootfs.mkdirs()
         extractTarGz(tmpTar, env.rootfs, onProgress)
         tmpTar.delete()
+        restoreHomes()
 
         postExtractFixups()
         // line 1 = the rootfs asset this was built from, so the app knows to
