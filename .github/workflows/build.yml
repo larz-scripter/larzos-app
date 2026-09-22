@@ -27,7 +27,7 @@ jobs:
           sudo apt-get update && sudo apt-get install -y binutils patchelf
           bash tools/fetch-proot.sh
 
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@v4
 
       - name: Build debug APK
         run: ./gradlew --no-daemon assembleDebug
